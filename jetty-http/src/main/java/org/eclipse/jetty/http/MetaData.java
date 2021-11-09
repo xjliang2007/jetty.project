@@ -39,7 +39,7 @@ public class MetaData implements Iterable<HttpField>
         _httpVersion = version;
         _fields = fields == null ? null : fields.asImmutable();
 
-        _contentLength = contentLength >= 0 ? contentLength : _fields == null ? -1 : _fields.getLongField(HttpHeader.CONTENT_LENGTH);
+        _contentLength = contentLength >= -1 ? contentLength : _fields == null ? -1 : _fields.getLongField(HttpHeader.CONTENT_LENGTH);
         _trailerSupplier = trailerSupplier;
     }
 

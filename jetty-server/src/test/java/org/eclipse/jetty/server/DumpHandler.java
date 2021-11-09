@@ -14,21 +14,19 @@
 package org.eclipse.jetty.server;
 
 import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.OutputStream;
 import java.io.OutputStreamWriter;
-import java.io.Reader;
 import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.util.Enumeration;
 
-import jakarta.servlet.ServletException;
-import jakarta.servlet.http.Cookie;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
 import org.eclipse.jetty.http.HttpHeader;
 import org.eclipse.jetty.http.MimeTypes;
-import org.eclipse.jetty.server.handler.AbstractHandler;
+import org.eclipse.jetty.util.BufferUtil;
+import org.eclipse.jetty.util.MultiMap;
+import org.eclipse.jetty.util.SharedBlockingCallback;
+import org.eclipse.jetty.util.SharedBlockingCallback.Blocker;
+import org.eclipse.jetty.util.UrlEncoded;
+import org.eclipse.jetty.util.Utf8StringBuilder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -37,11 +35,12 @@ import org.slf4j.LoggerFactory;
  * Dumps GET and POST requests.
  * Useful for testing and debugging.
  */
-public class DumpHandler extends AbstractHandler
+public class DumpHandler extends Handler.Abstract
 {
     private static final Logger LOG = LoggerFactory.getLogger(DumpHandler.class);
 
-    String label = "Dump HttpHandler";
+    private final SharedBlockingCallback _blocker = new SharedBlockingCallback(); 
+    String _label = "Dump HttpHandler";
 
     public DumpHandler()
     {
@@ -49,209 +48,200 @@ public class DumpHandler extends AbstractHandler
 
     public DumpHandler(String label)
     {
-        this.label = label;
+        this._label = label;
     }
-
+    
     @Override
-    public void handle(String target, Request baseRequest, HttpServletRequest request, HttpServletResponse response) throws IOException, ServletException
+    public boolean handle(Request request, Response response)
     {
-        if (!isStarted())
-            return;
-
-        if (Boolean.parseBoolean(request.getParameter("flush")))
-            response.flushBuffer();
-
-        if (Boolean.parseBoolean(request.getParameter("empty")))
+        try
         {
-            baseRequest.setHandled(true);
-            response.setStatus(200);
-            return;
-        }
+            if (!isStarted())
+                return false;
 
-        StringBuilder read = null;
-        if (request.getParameter("read") != null)
-        {
-            read = new StringBuilder();
-            int len = Integer.parseInt(request.getParameter("read"));
-            Reader in = request.getReader();
-            for (int i = len; i-- > 0; )
+            MultiMap<String> params = UrlEncoded.decodeQuery(request.getHttpURI().getQuery());
+
+            if (Boolean.parseBoolean(params.getValue("flush")))
             {
-                read.append((char)in.read());
-            }
-        }
-
-        if (request.getParameter("date") != null)
-            response.setHeader("Date", request.getParameter("date"));
-
-        if (request.getParameter("ISE") != null)
-        {
-            throw new IllegalStateException("Testing ISE");
-        }
-
-        if (request.getParameter("error") != null)
-        {
-            response.sendError(Integer.parseInt(request.getParameter("error")));
-            return;
-        }
-
-        baseRequest.setHandled(true);
-        response.setHeader(HttpHeader.CONTENT_TYPE.asString(), MimeTypes.Type.TEXT_HTML.asString());
-
-        OutputStream out = response.getOutputStream();
-        ByteArrayOutputStream buf = new ByteArrayOutputStream(2048);
-        Writer writer = new OutputStreamWriter(buf, StandardCharsets.ISO_8859_1);
-        writer.write("<html><h1>" + label + "</h1>");
-        writer.write("<pre>\npathInfo=" + request.getPathInfo() + "\n</pre>\n");
-        writer.write("<pre>\ncontentType=" + request.getContentType() + "\n</pre>\n");
-        writer.write("<pre>\nencoding=" + request.getCharacterEncoding() + "\n</pre>\n");
-        writer.write("<pre>\nservername=" + request.getServerName() + "\n</pre>\n");
-        writer.write("<pre>\nlocal=" + request.getLocalAddr() + ":" + request.getLocalPort() + "\n</pre>\n");
-        writer.write("<pre>\nremote=" + request.getRemoteAddr() + ":" + request.getRemotePort() + "\n</pre>\n");
-        writer.write("<h3>Header:</h3><pre>");
-        writer.write(String.format("%4s %s %s\n", request.getMethod(), request.getRequestURI(), request.getProtocol()));
-        Enumeration<String> headers = request.getHeaderNames();
-        while (headers.hasMoreElements())
-        {
-            String name = headers.nextElement();
-            writer.write(name);
-            writer.write(": ");
-            String value = request.getHeader(name);
-            writer.write(value == null ? "" : value);
-            writer.write("\n");
-        }
-        writer.write("</pre>\n<h3>Parameters:</h3>\n<pre>");
-        Enumeration<String> names = request.getParameterNames();
-        while (names.hasMoreElements())
-        {
-            String name = names.nextElement();
-            String[] values = request.getParameterValues(name);
-            if (values == null || values.length == 0)
-            {
-                writer.write(name);
-                writer.write("=\n");
-            }
-            else if (values.length == 1)
-            {
-                writer.write(name);
-                writer.write("=");
-                writer.write(values[0]);
-                writer.write("\n");
-            }
-            else
-            {
-                for (int i = 0; i < values.length; i++)
+                try (Blocker blocker = _blocker.acquire())
                 {
-                    writer.write(name);
-                    writer.write("[" + i + "]=");
-                    writer.write(values[i]);
-                    writer.write("\n");
+                    response.write(false, blocker);
                 }
             }
-        }
 
-        String cookieName = request.getParameter("CookieName");
-        if (cookieName != null && cookieName.trim().length() > 0)
-        {
-            String cookieAction = request.getParameter("Button");
-            try
+            if (Boolean.parseBoolean(params.getValue("empty")))
             {
-                String val = request.getParameter("CookieVal");
-                val = val.replaceAll("[ \n\r=<>]", "?");
-                Cookie cookie =
-                    new Cookie(cookieName.trim(), val);
-                if ("Clear Cookie".equals(cookieAction))
-                    cookie.setMaxAge(0);
-                response.addCookie(cookie);
+                response.setStatus(200);
+                return true;
             }
-            catch (IllegalArgumentException e)
-            {
-                writer.write("</pre>\n<h3>BAD Set-Cookie:</h3>\n<pre>");
-                writer.write(e.toString());
-            }
-        }
 
-        writer.write("</pre>\n<h3>Cookies:</h3>\n<pre>");
-        Cookie[] cookies = request.getCookies();
-        if (cookies != null && cookies.length > 0)
-        {
-            for (int c = 0; c < cookies.length; c++)
+            Utf8StringBuilder read = null;
+            if (params.getValue("read") != null)
             {
-                Cookie cookie = cookies[c];
-                writer.write(cookie.getName());
-                writer.write("=");
-                writer.write(cookie.getValue());
+                read = new Utf8StringBuilder();
+                int len = Integer.parseInt(params.getValue("read"));
+                byte[] buffer = new byte[8192];
+
+                Content content = null;
+                while (len > 0)
+                {
+                    if (content == null)
+                    {
+                        content = request.readContent();
+                        if (content == null)
+                        {
+                            try (Blocker blocker = _blocker.acquire())
+                            {
+                                request.demandContent(blocker::succeeded);
+                            }
+                            continue;
+                        }
+                    }
+
+                    if (content instanceof Content.Error)
+                    {
+                        request.failed(((Content.Error)content).getCause());
+                        return true;
+                    }
+
+                    int l = Math.min(buffer.length,Math.min(len, content.getByteBuffer().remaining()));
+                    content.getByteBuffer().get(buffer, 0, l);
+                    read.append(buffer, 0, l);
+
+                    if (content.isEmpty())
+                    {
+                        content.release();
+                        if (content.isLast())
+                            break;
+                        if (!content.isSpecial())
+                            content = null;
+                    }
+                }
+            }
+
+            if (params.getValue("date") != null)
+                response.getHeaders().put("Date", params.getValue("date"));
+
+            if (params.getValue("ISE") != null)
+                throw new IllegalStateException("Testing ISE");
+
+            if (params.getValue("error") != null)
+            {
+                response.setStatus(Integer.parseInt(params.getValue("error")));
+                request.succeeded();
+                return true;
+            }
+
+            response.setContentType(MimeTypes.Type.TEXT_HTML.asString());
+
+            ByteArrayOutputStream buf = new ByteArrayOutputStream(2048);
+            Writer writer = new OutputStreamWriter(buf, StandardCharsets.ISO_8859_1);
+            writer.write("<html><h1>" + _label + "</h1>");
+            writer.write("<pre>\nhttpURI=" + request.getHttpURI() + "\n</pre>\n");
+            writer.write("<pre>\npath=" + request.getPath() + "\n</pre>\n");
+            writer.write("<pre>\ncontentType=" + request.getHeaders().get(HttpHeader.CONTENT_TYPE) + "\n</pre>\n");
+            writer.write("<pre>\nservername=" + Request.getServerName(request) + "\n</pre>\n");
+            writer.write("<pre>\nlocal=" + request.getConnectionMetaData().getLocal() + "\n</pre>\n");
+            writer.write("<pre>\nremote=" + request.getConnectionMetaData().getRemote() + "\n</pre>\n");
+            writer.write("<h3>Header:</h3><pre>");
+            writer.write(String.format("%4s %s %s\n", request.getMethod(), request.getHttpURI().getPathQuery(), request.getConnectionMetaData().getProtocol()));
+            Enumeration<String> headers = request.getHeaders().getFieldNames();
+            while (headers.hasMoreElements())
+            {
+                String name = headers.nextElement();
+                writer.write(name);
+                writer.write(": ");
+                String value = request.getHeaders().get(name);
+                writer.write(value == null ? "" : value);
                 writer.write("\n");
             }
-        }
 
-        writer.write("</pre>\n<h3>Attributes:</h3>\n<pre>");
-        Enumeration<String> attributes = request.getAttributeNames();
-        if (attributes != null && attributes.hasMoreElements())
-        {
-            while (attributes.hasMoreElements())
+            writer.write("</pre>\n<h3>Attributes:</h3>\n<pre>");
+            for (String attr : request.getAttributeNames())
             {
-                String attr = attributes.nextElement().toString();
                 writer.write(attr);
                 writer.write("=");
                 writer.write(request.getAttribute(attr).toString());
                 writer.write("\n");
             }
-        }
 
-        writer.write("</pre>\n<h3>Content:</h3>\n<pre>");
+            writer.write("</pre>\n<h3>Content:</h3>\n<pre>");
 
-        if (read != null)
-        {
-            writer.write(read.toString());
-        }
-        else
-        {
-            char[] content = new char[4096];
-            int len;
-            try
+            if (read == null)
             {
-                Reader in = request.getReader();
-                while ((len = in.read(content)) >= 0)
+                read = new Utf8StringBuilder();
+                byte[] buffer = new byte[8192];
+
+                Content content = null;
+                while (true)
                 {
-                    writer.write(new String(content, 0, len));
+                    if (content == null)
+                    {
+                        content = request.readContent();
+                        if (content == null)
+                        {
+                            try (Blocker blocker = _blocker.acquire())
+                            {
+                                request.demandContent(blocker::succeeded);
+                            }
+                            continue;
+                        }
+                    }
+
+                    if (content instanceof Content.Error)
+                    {
+                        request.failed(((Content.Error)content).getCause());
+                        return true;
+                    }
+
+                    int l = Math.min(buffer.length, content.getByteBuffer().remaining());
+                    content.getByteBuffer().get(buffer, 0, l);
+                    read.append(buffer, 0, l);
+
+                    if (content.isEmpty())
+                    {
+                        content.release();
+                        if (content.isLast())
+                            break;
+                        if (!content.isSpecial())
+                            content = null;
+                    }
                 }
             }
-            catch (IOException e)
-            {
-                LOG.warn("Failed to copy request content", e);
-                writer.write(e.toString());
-            }
-        }
+            writer.write(read.toString());
 
-        writer.write("</pre>\n");
-        writer.write("</html>\n");
-        writer.flush();
-
-        // commit now
-        if (!Boolean.parseBoolean(request.getParameter("no-content-length")))
-            response.setContentLength(buf.size() + 1000);
-        response.addHeader("Before-Flush", response.isCommitted() ? "Committed???" : "Not Committed");
-        buf.writeTo(out);
-        out.flush();
-        response.addHeader("After-Flush", "These headers should not be seen in the response!!!");
-        response.addHeader("After-Flush", response.isCommitted() ? "Committed" : "Not Committed?");
-
-        // write remaining content after commit
-        try
-        {
-            buf.reset();
+            writer.write("</pre>\n");
+            writer.write("</html>\n");
             writer.flush();
-            for (int pad = 998; pad-- > 0; )
+
+            // commit now
+            if (!Boolean.parseBoolean(params.getValue("no-content-length")))
+                response.setContentLength(buf.size() + 1000);
+
+            response.getHeaders().add("Before-Flush", response.isCommitted() ? "Committed???" : "Not Committed");
+
+
+            try (Blocker blocker = _blocker.acquire())
             {
-                writer.write(" ");
+                response.write(false, blocker, BufferUtil.toBuffer(buf.toByteArray()));
             }
-            writer.write("\r\n");
-            writer.flush();
-            buf.writeTo(out);
+            response.addHeader("After-Flush", "These headers should not be seen in the response!!!");
+            response.addHeader("After-Flush", response.isCommitted() ? "Committed" : "Not Committed?");
+
+            // write remaining content after commit
+            String padding = "0123456789".repeat(99) + "01234567\r\n";
+
+            try (Blocker blocker = _blocker.acquire())
+            {
+                response.write(true, blocker, BufferUtil.toBuffer(padding.getBytes(StandardCharsets.ISO_8859_1)));
+            }
+
+            request.succeeded();
         }
-        catch (Exception e)
+        catch(Exception x)
         {
-            LOG.trace("IGNORED", e);
+            request.failed(x);
         }
+        return true;
     }
 }

@@ -88,7 +88,7 @@ public class ProxyConnectionFactory extends DetectorConnectionFactory
         v2.setMaxProxyHeader(maxProxyHeader);
     }
 
-    private static class ProxyV1ConnectionFactory extends AbstractConnectionFactory implements Detecting
+    private static class ProxyV1ConnectionFactory extends AbstractConnectionFactory implements ConnectionFactory.Detecting
     {
         private static final byte[] SIGNATURE = "PROXY".getBytes(StandardCharsets.US_ASCII);
 
@@ -357,7 +357,7 @@ public class ProxyConnectionFactory extends DetectorConnectionFactory
         }
     }
 
-    private static class ProxyV2ConnectionFactory extends AbstractConnectionFactory implements Detecting
+    private static class ProxyV2ConnectionFactory extends AbstractConnectionFactory implements ConnectionFactory.Detecting
     {
         private enum Family
         {

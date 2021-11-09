@@ -21,9 +21,6 @@
 package org.eclipse.jetty.server;
 
 import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.OutputStream;
-import java.io.PrintWriter;
 import java.io.StringReader;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
@@ -36,9 +33,6 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
-import jakarta.servlet.ServletException;
-import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletResponse;
 import org.eclipse.jetty.http.HttpCompliance;
 import org.eclipse.jetty.http.HttpHeader;
 import org.eclipse.jetty.http.HttpParser;
@@ -47,10 +41,8 @@ import org.eclipse.jetty.http.HttpTester;
 import org.eclipse.jetty.http.MimeTypes;
 import org.eclipse.jetty.logging.StacklessLogging;
 import org.eclipse.jetty.server.LocalConnector.LocalEndPoint;
-import org.eclipse.jetty.server.handler.AbstractHandler;
-import org.eclipse.jetty.server.handler.ErrorHandler;
 import org.eclipse.jetty.util.BufferUtil;
-import org.eclipse.jetty.util.IO;
+import org.eclipse.jetty.util.Callback;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -91,9 +83,6 @@ public class HttpConnectionTest
         connector.setIdleTimeout(5000);
         server.addConnector(connector);
         server.setHandler(new DumpHandler());
-        ErrorHandler eh = new ErrorHandler();
-        eh.setServer(server);
-        server.addBean(eh);
         server.start();
     }
 
@@ -269,7 +258,7 @@ public class HttpConnectionTest
 
             String rawResponse = connector.getResponse(request.toString());
             HttpTester.Response response = HttpTester.parseResponse(rawResponse);
-            assertThat("Response.status", response.getStatus(), is(HttpServletResponse.SC_BAD_REQUEST));
+            assertThat("Response.status", response.getStatus(), is(HttpStatus.BAD_REQUEST_400));
         }
     }
 
@@ -338,7 +327,7 @@ public class HttpConnectionTest
 
         String rawResponse = connector.getResponse(request.toString());
         HttpTester.Response response = HttpTester.parseResponse(rawResponse);
-        assertThat("Response.status", response.getStatus(), is(HttpServletResponse.SC_BAD_REQUEST));
+        assertThat("Response.status", response.getStatus(), is(HttpStatus.BAD_REQUEST_400));
     }
 
     /**
@@ -384,7 +373,7 @@ public class HttpConnectionTest
 
         String rawResponse = connector.getResponse(request.toString());
         HttpTester.Response response = HttpTester.parseResponse(rawResponse);
-        assertThat("Response.status (" + response.getReason() + ")", response.getStatus(), is(HttpServletResponse.SC_OK));
+        assertThat("Response.status (" + response.getReason() + ")", response.getStatus(), is(HttpStatus.OK_200));
     }
 
     public static Stream<Arguments> http11TransferEncodingInvalidChunked()
@@ -438,7 +427,7 @@ public class HttpConnectionTest
 
         String rawResponse = connector.getResponse(request.toString());
         HttpTester.Response response = HttpTester.parseResponse(rawResponse);
-        assertThat("Response.status", response.getStatus(), is(HttpServletResponse.SC_BAD_REQUEST));
+        assertThat("Response.status", response.getStatus(), is(HttpStatus.BAD_REQUEST_400));
     }
 
     @Test
@@ -861,16 +850,14 @@ public class HttpConnectionTest
     public void testEmptyFlush() throws Exception
     {
         server.stop();
-        server.setHandler(new AbstractHandler()
+        server.setHandler(new Handler.Abstract()
         {
-            @SuppressWarnings("unused")
             @Override
-            public void handle(String target, Request baseRequest, HttpServletRequest request, HttpServletResponse response) throws IOException, ServletException
+            public boolean handle(Request request, Response response)
             {
                 response.setStatus(200);
-                OutputStream out = response.getOutputStream();
-                out.flush();
-                out.flush();
+                response.write(false, Callback.NOOP);
+                return true;
             }
         });
         server.start();
@@ -1098,7 +1085,7 @@ public class HttpConnectionTest
             "\r\n" +
             "abcdefghij\r\n";
 
-        try (StacklessLogging stackless = new StacklessLogging(HttpChannel.class))
+        try (StacklessLogging stackless = new StacklessLogging(Channel.class))
         {
             LOG.info("EXPECTING: java.lang.IllegalStateException...");
             String response = connector.getResponse(requests);
@@ -1203,27 +1190,28 @@ public class HttpConnectionTest
         final String longstr = str;
         final CountDownLatch checkError = new CountDownLatch(1);
         server.stop();
-        server.setHandler(new AbstractHandler()
+        server.setHandler(new Handler.Abstract()
         {
-            @SuppressWarnings("unused")
             @Override
-            public void handle(String target, Request baseRequest, HttpServletRequest request, HttpServletResponse response) throws IOException, ServletException
+            public boolean handle(Request request, Response response)
             {
-                baseRequest.setHandled(true);
                 response.setHeader(HttpHeader.CONTENT_TYPE.toString(), MimeTypes.Type.TEXT_HTML.toString());
                 response.setHeader("LongStr", longstr);
-                PrintWriter writer = response.getWriter();
-                writer.write("<html><h1>FOO</h1></html>");
-                writer.flush();
-                if (writer.checkError())
-                    checkError.countDown();
-                response.flushBuffer();
+
+                response.write(false,
+                    Callback.from(request::succeeded, t ->
+                    {
+                        checkError.countDown();
+                        request.failed(t);
+                    }),
+                    BufferUtil.toBuffer("<html><h1>FOO</h1></html>"));
+                return true;
             }
         });
         server.start();
 
         String response = null;
-        try (StacklessLogging stackless = new StacklessLogging(HttpChannel.class))
+        try (StacklessLogging stackless = new StacklessLogging(Channel.class))
         {
             LOG.info("Expect IOException: Response header too large...");
             response = connector.getResponse("GET / HTTP/1.1\r\n" +
@@ -1253,21 +1241,22 @@ public class HttpConnectionTest
         final String longstr = "thisisastringthatshouldreachover12kbytes-" + new String(bytes, StandardCharsets.ISO_8859_1) + "_Z_";
         final CountDownLatch checkError = new CountDownLatch(1);
         server.stop();
-        server.setHandler(new AbstractHandler()
+        server.setHandler(new Handler.Abstract()
         {
-            @SuppressWarnings("unused")
             @Override
-            public void handle(String target, Request baseRequest, HttpServletRequest request, HttpServletResponse response) throws IOException, ServletException
+            public boolean handle(Request request, Response response)
             {
-                baseRequest.setHandled(true);
                 response.setHeader(HttpHeader.CONTENT_TYPE.toString(), MimeTypes.Type.TEXT_HTML.toString());
                 response.setHeader("LongStr", longstr);
-                PrintWriter writer = response.getWriter();
-                writer.write("<html><h1>FOO</h1></html>");
-                writer.flush();
-                if (writer.checkError())
-                    checkError.countDown();
-                response.flushBuffer();
+
+                response.write(false,
+                    Callback.from(request::succeeded, t ->
+                    {
+                        checkError.countDown();
+                        request.failed(t);
+                    }),
+                    BufferUtil.toBuffer("<html><h1>FOO</h1></html>"));
+                return true;
             }
         });
         server.start();
@@ -1366,17 +1355,41 @@ public class HttpConnectionTest
         String chunk2 = IntStream.range(0, 64).mapToObj(i -> chunk1).collect(Collectors.joining());
         long dataLength = chunk1.length() + chunk2.length();
         server.stop();
-        server.setHandler(new AbstractHandler()
+        server.setHandler(new Handler.Abstract()
         {
             @Override
-            public void handle(String target, Request jettyRequest, HttpServletRequest request, HttpServletResponse response) throws IOException
+            public boolean handle(Request request, Response response)
             {
-                jettyRequest.setHandled(true);
-                IO.copy(request.getInputStream(), IO.getNullStream());
+                while (true)
+                {
+                    Content content = request.readContent();
+                    if (content == null)
+                    {
+                        try
+                        {
+                            CountDownLatch blocker = new CountDownLatch(1);
+                            request.demandContent(blocker::countDown);
+                            blocker.await();
+                        }
+                        catch(InterruptedException e)
+                        {
+                            // ignored
+                        }
+                        continue;
+                    }
+
+                    if (content.hasRemaining())
+                        content.getByteBuffer().clear();
+                    content.release();
+                    if (content.isLast())
+                        break;
+                }
 
                 HttpConnection connection = HttpConnection.getCurrentConnection();
                 long bytesIn = connection.getBytesIn();
                 assertThat(bytesIn, greaterThan(dataLength));
+
+                return true;
             }
         });
         server.start();
