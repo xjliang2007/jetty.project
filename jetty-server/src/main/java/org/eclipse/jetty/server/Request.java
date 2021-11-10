@@ -15,7 +15,6 @@ package org.eclipse.jetty.server;
 
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
-import java.util.function.Consumer;
 import java.util.function.Function;
 
 import org.eclipse.jetty.http.HttpFields;
@@ -51,8 +50,6 @@ public interface Request extends Attributes, Callback
     Content readContent();
 
     void demandContent(Runnable onContentAvailable);
-
-    void onTrailers(Consumer<HttpFields> onTrailers);
 
     default Request getWrapped()
     {
@@ -210,12 +207,6 @@ public interface Request extends Attributes, Callback
         }
 
         @Override
-        public void onTrailers(Consumer<HttpFields> onTrailers)
-        {
-            _wrapped.onTrailers(onTrailers);
-        }
-
-        @Override
         public Request getWrapped()
         {
             return _wrapped;
@@ -244,6 +235,5 @@ public interface Request extends Attributes, Callback
         {
             return _wrapped.getInvocationType();
         }
-
     }
 }

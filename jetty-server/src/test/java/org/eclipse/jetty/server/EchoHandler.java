@@ -60,6 +60,15 @@ public class EchoHandler extends Handler.Abstract
                 return Action.SCHEDULED;
             }
 
+            if (content instanceof Content.Trailers)
+            {
+                _response.getTrailers()
+                    .add("Echo", "Trailers")
+                    .add(((Content.Trailers)content).getTrailers());
+                this.succeeded();
+                return Action.SCHEDULED;
+            }
+
             if (!content.hasRemaining() && content.isLast())
                 return Action.SUCCEEDED;
 

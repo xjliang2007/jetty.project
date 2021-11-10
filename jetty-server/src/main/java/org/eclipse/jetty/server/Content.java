@@ -16,6 +16,7 @@ package org.eclipse.jetty.server;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 
+import org.eclipse.jetty.http.HttpFields;
 import org.eclipse.jetty.util.BufferUtil;
 
 /**
@@ -23,8 +24,6 @@ import org.eclipse.jetty.util.BufferUtil;
  * It allows EOF and Error flows to be unified with content data. This allows
  * the semantics of multiple methods like flush, close, onError, etc. to be
  * included in the read/write APIs.
- *
- * TODO this is probably better as a concrete class
  */
 public interface Content
 {
@@ -115,7 +114,7 @@ public interface Content
         }
     }
 
-    Content EOF = new Special()
+    Special EOF = new Special()
     {
         @Override
         public ByteBuffer getByteBuffer()
@@ -176,6 +175,33 @@ public interface Content
         public String toString()
         {
             return _cause.toString();
+        }
+    }
+
+    class Trailers extends Special
+    {
+        private final HttpFields _trailers;
+
+        public Trailers(HttpFields trailers)
+        {
+            _trailers = trailers;
+        }
+
+        public HttpFields getTrailers()
+        {
+            return _trailers;
+        }
+
+        @Override
+        public boolean isLast()
+        {
+            return true;
+        }
+
+        @Override
+        public String toString()
+        {
+            return "TRAILERS";
         }
     }
 }

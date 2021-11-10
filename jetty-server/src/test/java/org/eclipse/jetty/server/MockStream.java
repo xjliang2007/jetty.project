@@ -109,8 +109,14 @@ class MockStream implements Stream
         Content content = _content.get();
         if (content == null || content == DEMAND)
             return null;
-        if (!content.isSpecial())
-            _content.set(content.isLast() ? Content.EOF : null);
+
+        Content next = null;
+        if (content instanceof Content.Trailers || content.isLast())
+            next = Content.EOF;
+        else if (content.isSpecial())
+            next = content;
+        _content.set(next);
+
         return content;
     }
 

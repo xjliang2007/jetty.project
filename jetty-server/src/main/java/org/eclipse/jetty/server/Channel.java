@@ -155,15 +155,6 @@ public class Channel extends AttributesMap
             : Invocable.getInvocationType(onContentAvailable);
     }
 
-    // TODO would trailers be better delivered via a special Content?
-    public Runnable onRequestComplete(HttpFields trailers)
-    {
-        Object consumer = _request._onTrailers.getAndSet(trailers);
-        if (consumer == null || trailers == null)
-            return null;
-        return () -> ((Consumer<HttpFields>)consumer).accept(trailers);
-    }
-
     public Runnable onConnectionClose(Throwable failed)
     {
         Stream stream = _stream.getAndSet(null);
@@ -175,32 +166,26 @@ public class Channel extends AttributesMap
 
     public void whenStreamComplete(Consumer<Throwable> onComplete)
     {
-        // TODO would a dedicated listener interface be better than this wrapping
-        whenStreamEvent(s ->
-            new Stream.Wrapper(s)
+        whenStreamEvent(s -> new Stream.Wrapper(s)
+        {
+            @Override
+            public void succeeded()
             {
-                @Override
-                public void succeeded()
-                {
-                    super.succeeded();
-                    onComplete.accept(null);
-                }
+                super.succeeded();
+                onComplete.accept(null);
+            }
 
-                @Override
-                public void failed(Throwable x)
-                {
-                    super.failed(x);
-                    onComplete.accept(x);
-                }
-            });
+            @Override
+            public void failed(Throwable x)
+            {
+                super.failed(x);
+                onComplete.accept(x);
+            }
+        });
     }
 
     public void whenStreamEvent(UnaryOperator<Stream> onStreamEvent)
     {
-        // TODO we can intercept stream events with this wrapper approach.
-        //      The alternative would be to have a listener mechanism and for the channel to explicitly call all
-        //      listeners prior to calling the stream... however, this will not see any direct calls made to the
-        //      stream (eg sendProcessing).
         _stream.getAndUpdate(s ->
         {
             if (s == null)
@@ -390,16 +375,6 @@ public class Channel extends AttributesMap
             if (task != null && task != onContentAvailable)
                 throw new IllegalStateException();
             stream().demandContent();
-        }
-
-        @Override
-        public void onTrailers(Consumer<HttpFields> onTrailers)
-        {
-            Object trailers = _onTrailers.getAndSet(onTrailers);
-            if (trailers instanceof Consumer)
-                throw new IllegalStateException("Trailer consumer already set");
-            if (trailers != null)
-                onTrailers.accept((HttpFields)trailers);
         }
 
         @Override
