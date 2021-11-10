@@ -66,6 +66,7 @@ public class DumpHandler extends Handler.Abstract
                 try (Blocker blocker = _blocker.acquire())
                 {
                     response.write(false, blocker);
+                    blocker.block();
                 }
             }
 
@@ -93,6 +94,7 @@ public class DumpHandler extends Handler.Abstract
                             try (Blocker blocker = _blocker.acquire())
                             {
                                 request.demandContent(blocker::succeeded);
+                                blocker.block();
                             }
                             continue;
                         }
@@ -104,8 +106,8 @@ public class DumpHandler extends Handler.Abstract
                         return true;
                     }
 
-                    int l = Math.min(buffer.length,Math.min(len, content.getByteBuffer().remaining()));
-                    content.getByteBuffer().get(buffer, 0, l);
+                    int l = Math.min(buffer.length,Math.min(len, content.remaining()));
+                    content.fill(buffer, 0, l);
                     read.append(buffer, 0, l);
 
                     if (content.isEmpty())
@@ -136,13 +138,13 @@ public class DumpHandler extends Handler.Abstract
 
             ByteArrayOutputStream buf = new ByteArrayOutputStream(2048);
             Writer writer = new OutputStreamWriter(buf, StandardCharsets.ISO_8859_1);
-            writer.write("<html><h1>" + _label + "</h1>");
-            writer.write("<pre>\nhttpURI=" + request.getHttpURI() + "\n</pre>\n");
-            writer.write("<pre>\npath=" + request.getPath() + "\n</pre>\n");
-            writer.write("<pre>\ncontentType=" + request.getHeaders().get(HttpHeader.CONTENT_TYPE) + "\n</pre>\n");
-            writer.write("<pre>\nservername=" + Request.getServerName(request) + "\n</pre>\n");
-            writer.write("<pre>\nlocal=" + request.getConnectionMetaData().getLocal() + "\n</pre>\n");
-            writer.write("<pre>\nremote=" + request.getConnectionMetaData().getRemote() + "\n</pre>\n");
+            writer.write("<html><h1>" + _label + "</h1>\n");
+            writer.write("<pre>httpURI=" + request.getHttpURI() + "</pre><br/>\n");
+            writer.write("<pre>path=" + request.getPath() + "</pre><br/>\n");
+            writer.write("<pre>contentType=" + request.getHeaders().get(HttpHeader.CONTENT_TYPE) + "</pre><br/>\n");
+            writer.write("<pre>servername=" + Request.getServerName(request) + "</pre><br/>\n");
+            writer.write("<pre>local=" + request.getConnectionMetaData().getLocal() + "</pre><br/>\n");
+            writer.write("<pre>remote=" + request.getConnectionMetaData().getRemote() + "</pre><br/>\n");
             writer.write("<h3>Header:</h3><pre>");
             writer.write(String.format("%4s %s %s\n", request.getMethod(), request.getHttpURI().getPathQuery(), request.getConnectionMetaData().getProtocol()));
             Enumeration<String> headers = request.getHeaders().getFieldNames();
@@ -183,6 +185,7 @@ public class DumpHandler extends Handler.Abstract
                             try (Blocker blocker = _blocker.acquire())
                             {
                                 request.demandContent(blocker::succeeded);
+                                blocker.block();
                             }
                             continue;
                         }
@@ -194,8 +197,8 @@ public class DumpHandler extends Handler.Abstract
                         return true;
                     }
 
-                    int l = Math.min(buffer.length, content.getByteBuffer().remaining());
-                    content.getByteBuffer().get(buffer, 0, l);
+                    int l = Math.min(buffer.length, content.remaining());
+                    content.fill(buffer, 0 , l);
                     read.append(buffer, 0, l);
 
                     if (content.isEmpty())
@@ -224,6 +227,7 @@ public class DumpHandler extends Handler.Abstract
             try (Blocker blocker = _blocker.acquire())
             {
                 response.write(false, blocker, BufferUtil.toBuffer(buf.toByteArray()));
+                blocker.block();
             }
             response.addHeader("After-Flush", "These headers should not be seen in the response!!!");
             response.addHeader("After-Flush", response.isCommitted() ? "Committed" : "Not Committed?");
@@ -234,12 +238,14 @@ public class DumpHandler extends Handler.Abstract
             try (Blocker blocker = _blocker.acquire())
             {
                 response.write(true, blocker, BufferUtil.toBuffer(padding.getBytes(StandardCharsets.ISO_8859_1)));
+                blocker.block();
             }
 
             request.succeeded();
         }
         catch(Exception x)
         {
+            x.printStackTrace();
             request.failed(x);
         }
         return true;

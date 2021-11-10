@@ -28,7 +28,7 @@ import org.eclipse.jetty.util.Callback;
 class MockStream implements Stream
 {
     private final static Throwable SUCCEEDED = new Throwable();
-    private final static Content DEMAND = new Content.Special() {};
+    private final static Content DEMAND = new Content.Abstract(true, false) {};
     private final long nano = System.nanoTime();
     private final AtomicReference<Content> _content = new AtomicReference<>();
     private final AtomicReference<Throwable> _complete = new AtomicReference<>();
@@ -110,12 +110,7 @@ class MockStream implements Stream
         if (content == null || content == DEMAND)
             return null;
 
-        Content next = null;
-        if (content instanceof Content.Trailers || content.isLast())
-            next = Content.EOF;
-        else if (content.isSpecial())
-            next = content;
-        _content.set(next);
+        _content.set(content.next());
 
         return content;
     }

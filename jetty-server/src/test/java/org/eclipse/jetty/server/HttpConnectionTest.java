@@ -168,7 +168,7 @@ public class HttpConnectionTest
         // header looking like another request is ignored
         String request = "GET /one\r\nGET :/two\r\n\r\n";
         String response = BufferUtil.toString(connector.executeRequest(request).waitForOutput(10, TimeUnit.SECONDS));
-        assertThat(response, containsString("pathInfo=/"));
+        assertThat(response, containsString("path=/one"));
         assertThat(response, not(containsString("two")));
     }
 
@@ -523,7 +523,8 @@ public class HttpConnectionTest
         int offset = 0;
         checkNotContained(response, offset, "HTTP/1.1");
         checkNotContained(response, offset, "200");
-        checkContains(response, offset, "pathInfo=/R1");
+        checkContains(response, offset, "httpURI=http://0.0.0.0/R1");
+        checkContains(response, offset, "path=/R1");
     }
 
     @Test
@@ -536,7 +537,8 @@ public class HttpConnectionTest
 
         int offset = 0;
         offset = checkContains(response, offset, "HTTP/1.1 200");
-        checkContains(response, offset, "/R1");
+        checkContains(response, offset, "httpURI=http://localhost/R1");
+        checkContains(response, offset, "path=/R1");
     }
 
     @Test

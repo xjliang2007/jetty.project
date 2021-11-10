@@ -77,14 +77,14 @@ public interface Content
      */
     default Content next()
     {
-        return isLast() ? Content.EOF : null;
+        return isSpecial() ? this : isLast() ? Content.EOF : null;
     }
 
     static Content from(Content content, Content next)
     {
         if (Objects.equals(content.next(), next))
             return content;
-        return new Content()
+        return new Abstract(content.isSpecial(), content.isLast())
         {
             @Override
             public ByteBuffer getByteBuffer()
@@ -99,21 +99,11 @@ public interface Content
             }
 
             @Override
-            public boolean isLast()
-            {
-                return content.isLast();
-            }
-
-            @Override
-            public boolean isSpecial()
-            {
-                return content.isSpecial();
-            }
-
-            @Override
             public Content next()
             {
-                return next;
+                if (content.next() == null)
+                    return next;
+                return from(content.next(), next);
             }
         };
     }
@@ -125,18 +115,12 @@ public interface Content
 
     static Content from(ByteBuffer buffer, boolean last)
     {
-        return new Content()
+        return new Abstract(false, last)
         {
             @Override
             public ByteBuffer getByteBuffer()
             {
                 return buffer;
-            }
-
-            @Override
-            public boolean isLast()
-            {
-                return last;
             }
 
             @Override
@@ -147,40 +131,38 @@ public interface Content
         };
     }
 
-    abstract class Special implements Content
+    abstract class Abstract implements Content
     {
+        private final boolean _special;
+        private final boolean _last;
+
+        protected Abstract(boolean special, boolean last)
+        {
+            _special = special;
+            _last = last;
+        }
+
         @Override
         public boolean isSpecial()
         {
-            return true;
+            return _special;
+        }
+
+        @Override
+        public boolean isLast()
+        {
+            return _last;
         }
 
         @Override
         public ByteBuffer getByteBuffer()
         {
             return null;
-        }
-
-        @Override
-        public Content next()
-        {
-            return this;
         }
     }
 
-    Special EOF = new Special()
+    Content EOF = new Abstract(true, true)
     {
-        @Override
-        public ByteBuffer getByteBuffer()
-        {
-            return null;
-        }
-
-        @Override
-        public void release()
-        {
-        }
-
         @Override
         public boolean isLast()
         {
@@ -194,12 +176,13 @@ public interface Content
         }
     };
 
-    class Error extends Special
+    class Error extends Abstract
     {
         private final Throwable _cause;
 
         public Error(Throwable cause)
         {
+            super(true, true);
             _cause = cause == null ? new IOException("unknown") : cause;
         }
 
@@ -209,47 +192,25 @@ public interface Content
         }
 
         @Override
-        public ByteBuffer getByteBuffer()
-        {
-            return null;
-        }
-
-        @Override
-        public void release()
-        {
-        }
-
-        @Override
-        public boolean isLast()
-        {
-            return true;
-        }
-
-        @Override
         public String toString()
         {
             return _cause.toString();
         }
     }
 
-    class Trailers extends Special
+    class Trailers extends Abstract
     {
         private final HttpFields _trailers;
 
         public Trailers(HttpFields trailers)
         {
+            super(true, true);
             _trailers = trailers;
         }
 
         public HttpFields getTrailers()
         {
             return _trailers;
-        }
-
-        @Override
-        public boolean isLast()
-        {
-            return true;
         }
 
         @Override

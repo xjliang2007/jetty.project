@@ -14,6 +14,7 @@
 package org.eclipse.jetty.server;
 
 import java.io.IOException;
+import java.net.InetSocketAddress;
 import java.net.SocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.WritePendingException;
@@ -52,6 +53,7 @@ import org.eclipse.jetty.io.ssl.SslConnection;
 import org.eclipse.jetty.util.AttributesMap;
 import org.eclipse.jetty.util.BufferUtil;
 import org.eclipse.jetty.util.Callback;
+import org.eclipse.jetty.util.HostPort;
 import org.eclipse.jetty.util.IteratingCallback;
 import org.eclipse.jetty.util.StringUtil;
 import org.slf4j.Logger;
@@ -1054,8 +1056,20 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
 
             _uri.scheme(getEndPoint() instanceof SslConnection.DecryptedEndPoint ? HttpScheme.HTTPS : HttpScheme.HTTP);
 
-            if (_authority != null && !HttpMethod.CONNECT.is(_method))
-                _uri.authority(_authority.getHost(), _authority.getPort());
+            if (!HttpMethod.CONNECT.is(_method))
+            {
+                if (_authority != null)
+                    _uri.authority(HostPort.normalizeHost(_authority.getHost()), _authority.getPort());
+                else
+                {
+                    SocketAddress addr = getConnection().getEndPoint().getLocalSocketAddress();
+                    if (addr instanceof InetSocketAddress)
+                    {
+                        InetSocketAddress inet = (InetSocketAddress)addr;
+                        _uri.authority(HostPort.normalizeHost(inet.getHostString()), inet.getPort());
+                    }
+                }
+            }
 
             _request = new MetaData.Request(_method, _uri.asImmutable(), _version, _headerBuilder, _contentLength);
 

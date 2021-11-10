@@ -832,7 +832,6 @@ public class ChannelTest
         assertThat(timeline.hasNext(), is(false));
     }
 
-
     @Test
     public void testTrailers() throws Exception
     {
@@ -884,5 +883,4 @@ public class ChannelTest
         assertThat(trailersRcv.get("Echo"), equalTo("Trailers"));
         assertThat(trailersRcv.get("Trailer"), equalTo("value"));
     }
-
 }
