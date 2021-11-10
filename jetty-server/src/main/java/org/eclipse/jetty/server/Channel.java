@@ -94,11 +94,6 @@ public class Channel extends AttributesMap
 
         _requests.incrementAndGet();
 
-        // TODO wrapping behaviour makes recycling requests kind of pointless, as much of the things that benefit
-        //      from reuse are in the wrappers.   So for example, now in ServletContextHandler, we make the effort
-        //      to recycle the ServletRequestState object and add that to the new request. Likewise, at this level
-        //      we need to determine if some expensive resources are best moved to the channel and referenced by the
-        //      request - eg perhaps AttributeMap?     But then should that reference be volatile and breakable?
         _request = new ChannelRequest(request);
         _response = new ChannelResponse();
 
@@ -114,7 +109,6 @@ public class Channel extends AttributesMap
                     @Override
                     public void send(MetaData.Response response, boolean last, Callback callback, ByteBuffer... content)
                     {
-                        // TODO wrap callback to work out data rate
                         if (response != null)
                             _responseMeta = response;
                         super.send(response, last, callback, content);

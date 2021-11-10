@@ -22,7 +22,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.LongAdder;
-import java.util.function.Supplier;
 
 import org.eclipse.jetty.http.BadMessageException;
 import org.eclipse.jetty.http.HostPortHttpField;
@@ -59,7 +58,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import static org.eclipse.jetty.http.HttpStatus.INTERNAL_SERVER_ERROR_500;
-import static org.eclipse.jetty.server.Content.EOF;
 
 /**
  * <p>A {@link Connection} that handles the HTTP protocol.</p>
@@ -116,7 +114,7 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
         _bufferPool = _connector.getByteBufferPool();
         _retainableByteBufferPool = RetainableByteBufferPool.findOrAdapt(connector, _bufferPool);
         _generator = newHttpGenerator();
-        _channel = new Http1Channel();
+        _channel = new Http1Channel(connector.getServer());
         _parser = newHttpParser(config.getHttpCompliance());
         _recordHttpComplianceViolations = recordComplianceViolations;
         if (LOG.isDebugEnabled())
@@ -622,7 +620,8 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
         {
             Runnable task = _channel.onConnectionClose(x);
             if (task != null)
-                task.run(); // TODO execute error path as invocation type is probably wrong
+                // Execute error path as invocation type is probably wrong.
+                getConnector().getExecutor().execute(task);
         }
 
         @Override
@@ -867,9 +866,9 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
         Http1Stream _stream;
         Runnable _onRequest;
 
-        public Http1Channel()
+        public Http1Channel(Server server)
         {
-            super(_channel.getServer(), HttpConnection.this);
+            super(server, HttpConnection.this);
         }
 
         @Override
@@ -901,22 +900,32 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
         }
 
         @Override
-        public boolean content(ByteBuffer item)
+        public boolean content(ByteBuffer buffer)
         {
+            _stream._content = Content.from(buffer, false);
             return false;
         }
 
         @Override
         public boolean contentComplete()
         {
-            // TODO
+            // Do nothing at this point.
+            // Wait for messageComplete so any trailers can be sent as special content
             return false;
         }
 
         @Override
         public boolean messageComplete()
         {
-            // TODO
+            if (_trailers == null)
+            {
+                _stream._content = _stream._content == null ? Content.EOF : Content.from(_stream._content, Content.EOF);
+            }
+            else
+            {
+                Content trailers = new Content.Trailers(_trailers.asImmutable());
+                _stream._content = _stream._content == null ? trailers : Content.from(_stream._content, trailers);
+            }
             return false;
         }
 
@@ -944,7 +953,7 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
 
     private static final HttpField PREAMBLE_UPGRADE_H2C = new HttpField(HttpHeader.UPGRADE, "h2c");
 
-    private class Http1Stream implements Stream, Supplier<HttpFields>
+    private class Http1Stream implements Stream
     {
         private final HttpFields.Mutable _headerBuilder;
         private final String _method;
@@ -1048,7 +1057,7 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
             if (_authority != null && !HttpMethod.CONNECT.is(_method))
                 _uri.authority(_authority.getHost(), _authority.getPort());
 
-            _request = new MetaData.Request(_method, _uri.asImmutable(), _version, _headerBuilder, _contentLength, this);
+            _request = new MetaData.Request(_method, _uri.asImmutable(), _version, _headerBuilder, _contentLength);
 
             Runnable handle = _channel.onRequest(_request, this);
 
@@ -1130,13 +1139,6 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
         }
 
         @Override
-        public HttpFields get()
-        {
-            // TODO trailers
-            return null;
-        }
-
-        @Override
         public String getId()
         {
             return null;
@@ -1155,8 +1157,7 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
                 parseAndFillForContent();
 
             Content content = _content;
-            if (content != null && !content.isSpecial())
-                _content = content.isLast() ? EOF : null;
+            _content = content.next();
             return content;
         }
 

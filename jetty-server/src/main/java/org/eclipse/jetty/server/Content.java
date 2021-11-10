@@ -15,6 +15,7 @@ package org.eclipse.jetty.server;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.Objects;
 
 import org.eclipse.jetty.http.HttpFields;
 import org.eclipse.jetty.util.BufferUtil;
@@ -70,6 +71,53 @@ public interface Content
         return length;
     }
 
+    /**
+     * Get the next content if known from the current content
+     * @return The next content, which may be null if not known, EOF or the current content if persistent
+     */
+    default Content next()
+    {
+        return isLast() ? Content.EOF : null;
+    }
+
+    static Content from(Content content, Content next)
+    {
+        if (Objects.equals(content.next(), next))
+            return content;
+        return new Content()
+        {
+            @Override
+            public ByteBuffer getByteBuffer()
+            {
+                return content.getByteBuffer();
+            }
+
+            @Override
+            public void release()
+            {
+                content.release();
+            }
+
+            @Override
+            public boolean isLast()
+            {
+                return content.isLast();
+            }
+
+            @Override
+            public boolean isSpecial()
+            {
+                return content.isSpecial();
+            }
+
+            @Override
+            public Content next()
+            {
+                return next;
+            }
+        };
+    }
+
     static Content from(ByteBuffer buffer)
     {
         return () -> buffer;
@@ -111,6 +159,12 @@ public interface Content
         public ByteBuffer getByteBuffer()
         {
             return null;
+        }
+
+        @Override
+        public Content next()
+        {
+            return this;
         }
     }
 
@@ -196,6 +250,12 @@ public interface Content
         public boolean isLast()
         {
             return true;
+        }
+
+        @Override
+        public Content next()
+        {
+            return EOF;
         }
 
         @Override
