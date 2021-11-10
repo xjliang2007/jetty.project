@@ -29,6 +29,8 @@ public interface Request extends Attributes, Callback
 
     Channel getChannel();
 
+    boolean isComplete();
+
     ConnectionMetaData getConnectionMetaData();
 
     String getMethod();
@@ -133,6 +135,12 @@ public interface Request extends Attributes, Callback
             super(wrapped);
             this._wrapped = wrapped;
             wrapped.setWrapper(this);
+        }
+
+        @Override
+        public boolean isComplete()
+        {
+            return _wrapped.isComplete();
         }
 
         @Override

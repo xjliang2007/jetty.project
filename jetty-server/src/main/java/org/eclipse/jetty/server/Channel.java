@@ -13,6 +13,7 @@
 
 package org.eclipse.jetty.server;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -21,6 +22,7 @@ import java.util.function.Consumer;
 import java.util.function.UnaryOperator;
 
 import org.eclipse.jetty.http.HttpFields;
+import org.eclipse.jetty.http.HttpHeader;
 import org.eclipse.jetty.http.HttpURI;
 import org.eclipse.jetty.http.MetaData;
 import org.eclipse.jetty.io.Connection;
@@ -28,6 +30,8 @@ import org.eclipse.jetty.util.AttributesMap;
 import org.eclipse.jetty.util.Callback;
 import org.eclipse.jetty.util.HostPort;
 import org.eclipse.jetty.util.thread.Invocable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * A Channel represents a sequence of request cycles from the same connection. However only a single
@@ -40,6 +44,8 @@ import org.eclipse.jetty.util.thread.Invocable;
  */
 public class Channel extends AttributesMap
 {
+    private static final Logger LOG = LoggerFactory.getLogger(AbstractConnector.class);
+
     public static final String UPGRADE_CONNECTION_ATTRIBUTE = Channel.class.getName() + ".UPGRADE";
 
     private final Server _server;
@@ -229,18 +235,40 @@ public class Channel extends AttributesMap
 
     private void handle()
     {
-        if (!_server.handle(_request, _response))
+        try
         {
-            if (_response.isCommitted())
+            if (!_server.handle(_request, _response))
             {
-                _request.failed(new IllegalStateException("Not Completed"));
+                if (_response.isCommitted())
+                {
+                    _request.failed(new IllegalStateException("Not Completed"));
+                }
+                else
+                {
+                    _response.reset();
+                    _response.setStatus(404);
+                    _request.succeeded();
+                }
             }
-            else
-            {
-                _response.reset();
-                _response.setStatus(404);
-                _request.succeeded();
-            }
+        }
+        catch (Throwable t)
+        {
+            handleException(t);
+        }
+    }
+
+    protected void handleException(Throwable t)
+    {
+        if (_response.isCommitted())
+        {
+            _request.failed(t == null ? new IllegalStateException() : t);
+        }
+        else
+        {
+            // TODO error page?
+            _response.reset();
+            _response.setStatus(500);
+            _request.succeeded();
         }
     }
 
@@ -284,6 +312,13 @@ public class Channel extends AttributesMap
         public Request getWrapper()
         {
             return _wrapper;
+        }
+
+        @Override
+        public boolean isComplete()
+        {
+            Stream s = _stream.get();
+            return s == null || s.isComplete();
         }
 
         Stream stream()
@@ -372,23 +407,22 @@ public class Channel extends AttributesMap
         {
             Stream s = _stream.getAndSet(null);
             if (s == null)
-                throw new IllegalStateException("stream completed");
+                return;
 
             // Cannot handle trailers after succeeded
             _onTrailers.set(null);
 
             // Commit and complete the response
-            // TODO do we need to be able to ask the response if it is complete? or is it just simpler and less racy
-            //      to do an empty last send like below?
-            s.send(_response.commitResponse(), true, Callback.from(() ->
+            s.send(_response.commitResponse(true), true, Callback.from(() ->
             {
-                // then ensure the request is complete
-                Throwable failed = s.consumeAll();
-                // input must be complete so succeed the stream and notify
-                if (failed == null)
-                    s.succeeded();
+                // ensure the request is consumed
+                Throwable unconsumed = s.consumeAll();
+                if (LOG.isDebugEnabled())
+                    LOG.debug("consumeAll {} ", this, unconsumed);
+                if (unconsumed != null && getConnectionMetaData().isPersistent())
+                    s.failed(unconsumed);
                 else
-                    s.failed(failed);
+                    s.succeeded();
             }, s::failed));
         }
 
@@ -399,9 +433,8 @@ public class Channel extends AttributesMap
             // This is equivalent to the previous HttpTransport.abort(Throwable), so we don't need to do much clean up
             // as channel will be shutdown and thrown away.
             Stream s = _stream.getAndSet(null);
-            if (s == null)
-                throw new IllegalStateException("completed");
-            s.failed(x);
+            if (s != null)
+                s.failed(x);
         }
 
         @Override
@@ -424,6 +457,8 @@ public class Channel extends AttributesMap
         private final HttpFields.Mutable _headers = HttpFields.build(); // TODO init
         private final AtomicReference<HttpFields> _trailers = new AtomicReference<>();
         private final ChannelRequest _request = Channel.this._request;
+        private long _written;
+        private long _contentLength = -1L;
         private Response _wrapper;
         private int _status;
 
@@ -493,7 +528,39 @@ public class Channel extends AttributesMap
         @Override
         public void write(boolean last, Callback callback, ByteBuffer... content)
         {
-            _request.stream().send(commitResponse(), last, callback, content);
+            for (ByteBuffer b : content)
+                _written += b.remaining();
+            if (_contentLength >= 0)
+            {
+                if (_contentLength < _written)
+                {
+                    fail(callback, "content-length %d < %d", _contentLength, _written);
+                    return;
+                }
+                if (last && _contentLength > _written)
+                {
+                    fail(callback, "content-length %d > %d", _contentLength, _written);
+                    return;
+                }
+            }
+
+            MetaData.Response commit = commitResponse(last);
+            if (commit != null && last && _contentLength != _written)
+            {
+                fail(callback, "content-length %d != %d", _contentLength, _written);
+                return;
+            }
+
+            _request.stream().send(commit, last, callback, content);
+        }
+
+        private void fail(Callback callback, String reason, Object... args)
+        {
+            IOException failure = new IOException(String.format(reason, args));
+            if (callback != null)
+                callback.failed(failure);
+            if (!getRequest().isComplete())
+                getRequest().failed(failure);
         }
 
         @Override
@@ -539,7 +606,7 @@ public class Channel extends AttributesMap
             _status = 0;
         }
 
-        private MetaData.Response commitResponse()
+        private MetaData.Response commitResponse(boolean last)
         {
             BiConsumer<Request, Response> committed = _onCommit.getAndSet(COMMITTED);
             if (committed == COMMITTED)
@@ -547,6 +614,16 @@ public class Channel extends AttributesMap
 
             if (committed != UNCOMMITTED)
                 notifyCommit(committed);
+
+            _contentLength = _headers.getLongField(HttpHeader.CONTENT_LENGTH);
+            if (last && _contentLength < 0L)
+            {
+                _contentLength = _written;
+                _headers.putLongField(HttpHeader.CONTENT_LENGTH, _contentLength);
+            }
+
+            if (_status == 0)
+                _status = 200;
 
             return new MetaData.Response(
                 _request._metaData.getHttpVersion(),

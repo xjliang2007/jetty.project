@@ -17,14 +17,14 @@ import java.util.HashMap;
 import java.util.Map;
 
 import org.eclipse.jetty.server.handler.ContextHandler;
-import org.eclipse.jetty.server.jmx.Handler$AbstractMBean;
+import org.eclipse.jetty.server.jmx.HandlerIAbstractMBean;
 import org.eclipse.jetty.util.annotation.ManagedAttribute;
 import org.eclipse.jetty.util.annotation.ManagedObject;
 import org.eclipse.jetty.util.annotation.ManagedOperation;
 import org.eclipse.jetty.util.annotation.Name;
 
 @ManagedObject("ContextHandler mbean wrapper")
-public class ContextHandlerMBean extends Handler$AbstractMBean
+public class ContextHandlerMBean extends HandlerIAbstractMBean
 {
     private ContextHandler _contextHandler;
 

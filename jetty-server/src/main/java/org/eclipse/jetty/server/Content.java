@@ -16,6 +16,8 @@ package org.eclipse.jetty.server;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 
+import org.eclipse.jetty.util.BufferUtil;
+
 /**
  * The Content abstract is based on what is already used in several places.
  * It allows EOF and Error flows to be unified with content data. This allows
@@ -89,6 +91,12 @@ public interface Content
             {
                 return last;
             }
+
+            @Override
+            public String toString()
+            {
+                return String.format("[%s, l=%b]", BufferUtil.toDetailString(getByteBuffer()), isLast());
+            }
         };
     }
 
@@ -98,6 +106,12 @@ public interface Content
         public boolean isSpecial()
         {
             return true;
+        }
+
+        @Override
+        public ByteBuffer getByteBuffer()
+        {
+            return null;
         }
     }
 
@@ -118,6 +132,12 @@ public interface Content
         public boolean isLast()
         {
             return true;
+        }
+
+        @Override
+        public String toString()
+        {
+            return "EOF";
         }
     };
 
@@ -150,6 +170,12 @@ public interface Content
         public boolean isLast()
         {
             return true;
+        }
+
+        @Override
+        public String toString()
+        {
+            return _cause.toString();
         }
     }
 }

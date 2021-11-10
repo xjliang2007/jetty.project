@@ -296,7 +296,9 @@ public interface HttpFields extends Iterable<HttpField>
      * _names for this request.
      *
      * @return an enumeration of field names
+     * @deprecated use {@link #getFieldNamesCollection()}
      */
+    @Deprecated
     default Enumeration<String> getFieldNames()
     {
         return Collections.enumeration(getFieldNamesCollection());

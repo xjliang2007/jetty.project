@@ -11,23 +11,22 @@
 // ========================================================================
 //
 
-package org.eclipse.jetty.server.handler.jmx;
+package org.eclipse.jetty.server.jmx;
 
-import java.io.IOException;
+import java.util.List;
 
 import org.eclipse.jetty.jmx.ObjectMBean;
+import org.eclipse.jetty.server.Handler;
 import org.eclipse.jetty.server.Server;
-import org.eclipse.jetty.server.handler.AbstractHandler;
-import org.eclipse.jetty.server.handler.AbstractHandlerContainer;
 import org.eclipse.jetty.server.handler.ContextHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class AbstractHandlerMBean extends ObjectMBean
+public class HandlerIAbstractMBean extends ObjectMBean
 {
-    private static final Logger LOG = LoggerFactory.getLogger(AbstractHandlerMBean.class);
+    private static final Logger LOG = LoggerFactory.getLogger(HandlerIAbstractMBean.class);
 
-    public AbstractHandlerMBean(Object managedObject)
+    public HandlerIAbstractMBean(Object managedObject)
     {
         super(managedObject);
     }
@@ -40,22 +39,21 @@ public class AbstractHandlerMBean extends ObjectMBean
             String basis = null;
             if (_managed instanceof ContextHandler)
             {
-                ContextHandler handler = (ContextHandler)_managed;
-                String context = getContextName(handler);
-                if (context == null)
-                    context = handler.getDisplayName();
-                if (context != null)
-                    return context;
+                ContextHandler contextHandler = (ContextHandler)_managed;
+                String contextName = getContextName(contextHandler);
+                if (contextName == null)
+                    contextName = contextHandler.getDisplayName();
+                if (contextName != null)
+                    return contextName;
             }
-            else if (_managed instanceof AbstractHandler)
+            else if (_managed instanceof Handler.Abstract)
             {
-                AbstractHandler handler = (AbstractHandler)_managed;
+                Handler.Abstract handler = (Handler.Abstract)_managed;
                 Server server = handler.getServer();
                 if (server != null)
                 {
                     ContextHandler context =
-                        AbstractHandlerContainer.findContainerOf(server,
-                            ContextHandler.class, handler);
+                        Handler.findContainerOf(server, ContextHandler.class, handler);
 
                     if (context != null)
                         basis = getContextName(context);
@@ -79,22 +77,12 @@ public class AbstractHandlerMBean extends ObjectMBean
                 name = "ROOT";
         }
 
-        if (name == null && context.getBaseResource() != null)
-        {
-            try
-            {
-                if (context.getBaseResource().getFile() != null)
-                    name = context.getBaseResource().getFile().getName();
-            }
-            catch (IOException e)
-            {
-                LOG.trace("IGNORED", e);
-                name = context.getBaseResource().getName();
-            }
-        }
+        if (name == null && context.getResourceBase() != null)
+            name = context.getResourceBase().toFile().getName();
 
-        if (context.getVirtualHosts() != null && context.getVirtualHosts().length > 0)
-            name = '"' + name + "@" + context.getVirtualHosts()[0] + '"';
+        List<String> vhosts = context.getVirtualHosts();
+        if (vhosts.size() > 0)
+            name = '"' + name + "@" + vhosts.get(0) + '"';
 
         return name;
     }

@@ -104,6 +104,14 @@ public class Server extends Handler.Wrapper implements Attributes
         setServer(this);
     }
 
+    @Override
+    public boolean handle(Request request, Response response)
+    {
+        if (!isStarted())
+            return false;
+        return super.handle(request, response);
+    }
+
     public boolean isDryRun()
     {
         return _dryRun;

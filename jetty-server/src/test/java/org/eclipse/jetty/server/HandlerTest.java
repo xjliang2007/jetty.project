@@ -22,6 +22,10 @@ import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.nullValue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+/**
+ * This test checks the mechanism of combining Handlers into a tree, but doesn't check their operation.
+ * @see ChannelTest for testing of calling Handlers
+ */
 public class HandlerTest
 {
     @Test
