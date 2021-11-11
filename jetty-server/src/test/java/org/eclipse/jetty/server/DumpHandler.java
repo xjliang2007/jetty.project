@@ -20,6 +20,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Enumeration;
 
 import org.eclipse.jetty.http.HttpHeader;
+import org.eclipse.jetty.http.HttpURI;
 import org.eclipse.jetty.http.MimeTypes;
 import org.eclipse.jetty.util.BufferUtil;
 import org.eclipse.jetty.util.MultiMap;
@@ -59,7 +60,10 @@ public class DumpHandler extends Handler.Abstract
             if (!isStarted())
                 return false;
 
-            MultiMap<String> params = UrlEncoded.decodeQuery(request.getHttpURI().getQuery());
+            HttpURI httpURI = request.getHttpURI();
+            System.err.println(httpURI);
+
+            MultiMap<String> params = UrlEncoded.decodeQuery(httpURI.getQuery());
 
             if (Boolean.parseBoolean(params.getValue("flush")))
             {
@@ -73,6 +77,7 @@ public class DumpHandler extends Handler.Abstract
             if (Boolean.parseBoolean(params.getValue("empty")))
             {
                 response.setStatus(200);
+                request.succeeded();
                 return true;
             }
 
@@ -109,6 +114,7 @@ public class DumpHandler extends Handler.Abstract
                     int l = Math.min(buffer.length,Math.min(len, content.remaining()));
                     content.fill(buffer, 0, l);
                     read.append(buffer, 0, l);
+                    len -= l;
 
                     if (content.isEmpty())
                     {
@@ -139,14 +145,14 @@ public class DumpHandler extends Handler.Abstract
             ByteArrayOutputStream buf = new ByteArrayOutputStream(2048);
             Writer writer = new OutputStreamWriter(buf, StandardCharsets.ISO_8859_1);
             writer.write("<html><h1>" + _label + "</h1>\n");
-            writer.write("<pre>httpURI=" + request.getHttpURI() + "</pre><br/>\n");
+            writer.write("<pre>httpURI=" + httpURI + "</pre><br/>\n");
             writer.write("<pre>path=" + request.getPath() + "</pre><br/>\n");
             writer.write("<pre>contentType=" + request.getHeaders().get(HttpHeader.CONTENT_TYPE) + "</pre><br/>\n");
             writer.write("<pre>servername=" + Request.getServerName(request) + "</pre><br/>\n");
             writer.write("<pre>local=" + request.getConnectionMetaData().getLocal() + "</pre><br/>\n");
             writer.write("<pre>remote=" + request.getConnectionMetaData().getRemote() + "</pre><br/>\n");
             writer.write("<h3>Header:</h3><pre>");
-            writer.write(String.format("%4s %s %s\n", request.getMethod(), request.getHttpURI().getPathQuery(), request.getConnectionMetaData().getProtocol()));
+            writer.write(String.format("%4s %s %s\n", request.getMethod(), httpURI.getPathQuery(), request.getConnectionMetaData().getProtocol()));
             Enumeration<String> headers = request.getHeaders().getFieldNames();
             while (headers.hasMoreElements())
             {
@@ -233,7 +239,7 @@ public class DumpHandler extends Handler.Abstract
             response.addHeader("After-Flush", response.isCommitted() ? "Committed" : "Not Committed?");
 
             // write remaining content after commit
-            String padding = "0123456789".repeat(99) + "01234567\r\n";
+            String padding = "ABCDEFGHIJ".repeat(99) + "ABCDEFGH\r\n";
 
             try (Blocker blocker = _blocker.acquire())
             {

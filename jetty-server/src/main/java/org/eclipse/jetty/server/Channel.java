@@ -89,6 +89,8 @@ public class Channel extends AttributesMap
 
     public Runnable onRequest(MetaData.Request request, Stream stream)
     {
+        if (LOG.isDebugEnabled())
+            LOG.debug("onRequest {} {}", request, stream);
         if (!_stream.compareAndSet(null, stream))
             throw new IllegalStateException("Stream pending");
 

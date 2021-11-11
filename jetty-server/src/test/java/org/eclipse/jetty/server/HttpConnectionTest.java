@@ -218,48 +218,45 @@ public class HttpConnectionTest
         assertThat(response, containsString("Early EOF"));
     }
 
+    public static Stream<int[]> contentLengths()
+    {
+        return Stream.of(
+            new int[] {0, 8},
+            new int[] {8, 0},
+            new int[] {8, 8},
+            new int[] {0, 8, 0},
+            new int[] {1, 2, 3, 4, 5, 6, 7, 8},
+            new int[] {8, 2, 1},
+            new int[] {0, 0},
+            new int[] {8, 0, 8},
+            new int[] {-1, 8},
+            new int[] {8, -1},
+            new int[] {-1, 8, -1},
+            new int[] {-1, -1},
+            new int[] {8, -1, 8}
+        );
+    }
     /**
      * More then 1 Content-Length is a bad requests per HTTP rfcs.
      */
-    @Test
-    public void testHttp11MultipleContentLength() throws Exception
+    @ParameterizedTest
+    @MethodSource("contentLengths")
+    public void testHttp11MultipleContentLength(int[] clen) throws Exception
     {
         HttpParser.LOG.info("badMessage: 400 Bad messages EXPECTED...");
-        int[][] contentLengths = {
-            {0, 8},
-            {8, 0},
-            {8, 8},
-            {0, 8, 0},
-            {1, 2, 3, 4, 5, 6, 7, 8},
-            {8, 2, 1},
-            {0, 0},
-            {8, 0, 8},
-            {-1, 8},
-            {8, -1},
-            {-1, 8, -1},
-            {-1, -1},
-            {8, -1, 8},
-            };
+        StringBuilder request = new StringBuilder();
+        request.append("POST / HTTP/1.1\r\n");
+        request.append("Host: local\r\n");
+        for (int i : clen)
+            request.append("Content-Length: ").append(i).append("\r\n");
+        request.append("Content-Type: text/plain\r\n");
+        request.append("Connection: close\r\n");
+        request.append("\r\n");
+        request.append("abcdefgh"); // actual content of 8 bytes
 
-        for (int x = 0; x < contentLengths.length; x++)
-        {
-            StringBuilder request = new StringBuilder();
-            request.append("POST /?id=").append(Integer.toString(x)).append(" HTTP/1.1\r\n");
-            request.append("Host: local\r\n");
-            int[] clen = contentLengths[x];
-            for (int n = 0; n < clen.length; n++)
-            {
-                request.append("Content-Length: ").append(Integer.toString(clen[n])).append("\r\n");
-            }
-            request.append("Content-Type: text/plain\r\n");
-            request.append("Connection: close\r\n");
-            request.append("\r\n");
-            request.append("abcdefgh"); // actual content of 8 bytes
-
-            String rawResponse = connector.getResponse(request.toString());
-            HttpTester.Response response = HttpTester.parseResponse(rawResponse);
-            assertThat("Response.status", response.getStatus(), is(HttpStatus.BAD_REQUEST_400));
-        }
+        String rawResponse = connector.getResponse(request.toString());
+        HttpTester.Response response = HttpTester.parseResponse(rawResponse);
+        assertThat("Response.status", response.getStatus(), is(HttpStatus.BAD_REQUEST_400));
     }
 
     static final int CHUNKED = -1;
@@ -440,7 +437,7 @@ public class HttpConnectionTest
 
         int offset = 0;
         offset = checkContains(response, offset, "HTTP/1.1 200");
-        checkContains(response, offset, "pathInfo=/");
+        checkContains(response, offset, "path=/");
     }
 
     @Test
@@ -454,7 +451,7 @@ public class HttpConnectionTest
         int offset = 0;
         offset = checkContains(response, offset, "HTTP/1.1 200");
         offset = checkContains(response, offset, "Date: ");
-        checkContains(response, offset, "pathInfo=/");
+        checkContains(response, offset, "path=/");
     }
 
     @Test
@@ -468,7 +465,7 @@ public class HttpConnectionTest
         int offset = 0;
         offset = checkContains(response, offset, "HTTP/1.1 200");
         offset = checkContains(response, offset, "Date: 1 Jan 1970");
-        checkContains(response, offset, "pathInfo=/");
+        checkContains(response, offset, "path=/");
     }
 
     @Test
@@ -485,7 +482,7 @@ public class HttpConnectionTest
     {
         String response = connector.getResponse("GET /ooops/../path HTTP/1.0\r\nHost: localhost:80\r\n\n");
         checkContains(response, 0, "HTTP/1.1 200 OK");
-        checkContains(response, 0, "pathInfo=/path");
+        checkContains(response, 0, "path=/path");
     }
 
     @Test
@@ -858,7 +855,7 @@ public class HttpConnectionTest
             public boolean handle(Request request, Response response)
             {
                 response.setStatus(200);
-                response.write(false, Callback.NOOP);
+                response.write(false, request);
                 return true;
             }
         });
@@ -964,12 +961,12 @@ public class HttpConnectionTest
         String response = endp.getResponse() + endp.getResponse();
 
         offset = checkContains(response, offset, "HTTP/1.1 200");
-        offset = checkContains(response, offset, "pathInfo=/R1");
+        offset = checkContains(response, offset, "path=/R1");
         offset = checkContains(response, offset, "1234");
         checkNotContained(response, offset, "56789");
         offset = checkContains(response, offset, "HTTP/1.1 200");
-        offset = checkContains(response, offset, "pathInfo=/R2");
-        offset = checkContains(response, offset, "encoding=UTF-8");
+        offset = checkContains(response, offset, "path=/R2");
+        offset = checkContains(response, offset, "charset=UTF-8");
         checkContains(response, offset, "abcdefghij");
     }
 
@@ -992,7 +989,7 @@ public class HttpConnectionTest
         assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime()) - start, lessThanOrEqualTo(2000L));
 
         offset = checkContains(response, offset, "HTTP/1.1 200");
-        offset = checkContains(response, offset, "pathInfo=/R1");
+        offset = checkContains(response, offset, "path=/R1");
         offset = checkContains(response, offset, "1234");
         checkNotContained(response, offset, "56789");
     }
@@ -1061,7 +1058,7 @@ public class HttpConnectionTest
         offset = checkContains(response, offset, "HTTP/1.1 599");
         offset = checkContains(response, offset, "HTTP/1.1 200");
         offset = checkContains(response, offset, "/R2");
-        offset = checkContains(response, offset, "encoding=UTF-8");
+        offset = checkContains(response, offset, "charset=utf-8");
         checkContains(response, offset, "abcdefghij");
     }
 
