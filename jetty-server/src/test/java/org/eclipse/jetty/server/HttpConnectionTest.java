@@ -420,8 +420,6 @@ public class HttpConnectionTest
         request.append("abcdefgh"); // actual content of 8 bytes
         request.append("\r\n0;\r\n\r\n"); // last chunk
 
-        System.out.println(request.toString());
-
         String rawResponse = connector.getResponse(request.toString());
         HttpTester.Response response = HttpTester.parseResponse(rawResponse);
         assertThat("Response.status", response.getStatus(), is(HttpStatus.BAD_REQUEST_400));
@@ -1388,6 +1386,7 @@ public class HttpConnectionTest
                 long bytesIn = connection.getBytesIn();
                 assertThat(bytesIn, greaterThan(dataLength));
 
+                request.succeeded();
                 return true;
             }
         });

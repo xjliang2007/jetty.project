@@ -109,7 +109,42 @@ public class Server extends Handler.Wrapper implements Attributes
     {
         if (!isStarted())
             return false;
-        return super.handle(request, response);
+
+        try
+        {
+            if (!super.handle(request, response))
+            {
+                if (response.isCommitted())
+                {
+                    request.failed(new IllegalStateException("Not Completed"));
+                }
+                else
+                {
+                    // TODO error page?
+                    response.reset();
+                    response.setStatus(404);
+                    request.succeeded();
+                }
+            }
+        }
+        catch (Throwable t)
+        {
+            LOG.warn("handle failed {} {}", this, t);
+            // TODO can this all be moved into request.failed?
+            if (response.isCommitted())
+            {
+                request.failed(t);
+            }
+            else
+            {
+                // TODO error page?
+                response.reset();
+                response.setStatus(500);
+                request.succeeded();
+            }
+        }
+
+        return true;
     }
 
     public boolean isDryRun()

@@ -44,15 +44,10 @@ class MockStream implements Stream
 
     MockStream(Channel channel, boolean atEof)
     {
+        channel.bind(this);
         _channel = channel;
         if (atEof)
             _content.set(Content.EOF);
-    }
-
-    MockStream(Channel channel, ByteBuffer content)
-    {
-        _channel = channel;
-        _content.set(Content.from(content, true));
     }
 
     public boolean isDemanding()

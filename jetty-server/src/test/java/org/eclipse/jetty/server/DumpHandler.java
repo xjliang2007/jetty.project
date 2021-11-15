@@ -251,7 +251,6 @@ public class DumpHandler extends Handler.Abstract
         }
         catch(Exception x)
         {
-            x.printStackTrace();
             request.failed(x);
         }
         return true;

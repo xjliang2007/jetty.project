@@ -78,21 +78,6 @@ public interface HttpFields extends Iterable<HttpField>
 
     HttpFields asImmutable();
 
-    /**
-     * Switch the current HttpFields to read-only state.
-     * Unlike {@link #asImmutable()} which will take a copy of a {@link Mutable}, this method changes the state of the
-     * {@link Mutable} instance so that it will ignore any future mutations.  If the instance was already {@link Immutable},
-     * then this method just returns itself.
-     *
-     * This is useful to preserve headers in the state as they are committed.
-     *
-     * @return A read-only HttpFields, either an Immutable or a Mutable that is switched to read-only state.
-     */
-    default HttpFields toReadOnly()
-    {
-        return asImmutable();
-    }
-
     default String asString()
     {
         StringBuilder buffer = new StringBuilder();
@@ -533,7 +518,6 @@ public interface HttpFields extends Iterable<HttpField>
     {
         private HttpField[] _fields;
         private int _size;
-        private boolean _readOnly;
 
         /**
          * Initialize an empty HttpFields.
@@ -618,7 +602,7 @@ public interface HttpFields extends Iterable<HttpField>
          */
         public Mutable add(String name, String value)
         {
-            if (!_readOnly && value != null)
+            if (value != null)
                 return add(new HttpField(name, value));
             return this;
         }
@@ -638,9 +622,6 @@ public interface HttpFields extends Iterable<HttpField>
          */
         public Mutable add(HttpHeader header, String value)
         {
-            if (_readOnly)
-                return this;
-
             if (value == null)
                 throw new IllegalArgumentException("null value");
 
@@ -650,7 +631,7 @@ public interface HttpFields extends Iterable<HttpField>
 
         public Mutable add(HttpField field)
         {
-            if (!_readOnly && field != null)
+            if (field != null)
             {
                 if (_size == _fields.length)
                     _fields = Arrays.copyOf(_fields, _size * 2);
@@ -661,9 +642,6 @@ public interface HttpFields extends Iterable<HttpField>
 
         public Mutable add(HttpFields fields)
         {
-            if (_readOnly)
-                return this;
-
             if (_fields == null)
                 _fields = new HttpField[fields.size() + 4];
             else if (_size + fields.size() >= _fields.length)
@@ -702,9 +680,6 @@ public interface HttpFields extends Iterable<HttpField>
          */
         public Mutable addCSV(HttpHeader header, String... values)
         {
-            if (_readOnly)
-                return this;
-
             QuotedCSV existing = null;
             for (HttpField f : this)
             {
@@ -731,8 +706,6 @@ public interface HttpFields extends Iterable<HttpField>
          */
         public Mutable addCSV(String name, String... values)
         {
-            if (_readOnly)
-                return this;
             QuotedCSV existing = null;
             for (HttpField f : this)
             {
@@ -765,22 +738,12 @@ public interface HttpFields extends Iterable<HttpField>
         @Override
         public HttpFields asImmutable()
         {
-            if (_readOnly)
-                return this;
             return new Immutable(Arrays.copyOf(_fields, _size));
-        }
-
-        @Override
-        public HttpFields toReadOnly()
-        {
-            _readOnly = true;
-            return this;
         }
 
         public Mutable clear()
         {
-            if (!_readOnly)
-                _size = 0;
+            _size = 0;
             return this;
         }
 
@@ -794,9 +757,6 @@ public interface HttpFields extends Iterable<HttpField>
          */
         public void ensureField(HttpField field)
         {
-            if (_readOnly)
-                return;
-
             // Is the field value multi valued?
             if (field.getValue().indexOf(',') < 0)
             {
@@ -998,8 +958,7 @@ public interface HttpFields extends Iterable<HttpField>
                 {
                     if (_size == 0)
                         throw new IllegalStateException();
-                    if (!_readOnly)
-                        Mutable.this.remove(--_index);
+                    Mutable.this.remove(--_index);
                 }
             };
         }
@@ -1011,9 +970,6 @@ public interface HttpFields extends Iterable<HttpField>
 
         public Mutable put(HttpField field)
         {
-            if (_readOnly)
-                return this;
-
             boolean put = false;
 
             for (int i = 0; i < _size; i++)
@@ -1063,8 +1019,6 @@ public interface HttpFields extends Iterable<HttpField>
          */
         public Mutable put(HttpHeader header, String value)
         {
-            if (_readOnly)
-                return this;
             return (value == null)
                 ? remove(header)
                 : put(new HttpField(header, value));
@@ -1215,8 +1169,6 @@ public interface HttpFields extends Iterable<HttpField>
          */
         public void computeField(HttpHeader header, BiFunction<HttpHeader, List<HttpField>, HttpField> computeFn)
         {
-            if (_readOnly)
-                return;
             computeField(header, computeFn, (f, h) -> f.getHeader() == h);
         }
 
@@ -1229,8 +1181,6 @@ public interface HttpFields extends Iterable<HttpField>
          */
         public void computeField(String name, BiFunction<String, List<HttpField>, HttpField> computeFn)
         {
-            if (_readOnly)
-                return;
             computeField(name, computeFn, HttpField::is);
         }
 
@@ -1296,8 +1246,6 @@ public interface HttpFields extends Iterable<HttpField>
          */
         public Mutable remove(HttpHeader name)
         {
-            if (_readOnly)
-                return this;
             for (int i = 0; i < _size; i++)
             {
                 HttpField f = _fields[i];
@@ -1309,8 +1257,6 @@ public interface HttpFields extends Iterable<HttpField>
 
         public Mutable remove(EnumSet<HttpHeader> fields)
         {
-            if (_readOnly)
-                return this;
             for (int i = 0; i < _size; i++)
             {
                 HttpField f = _fields[i];
@@ -1328,8 +1274,6 @@ public interface HttpFields extends Iterable<HttpField>
          */
         public Mutable remove(String name)
         {
-            if (_readOnly)
-                return this;
             for (int i = 0; i < _size; i++)
             {
                 HttpField f = _fields[i];
@@ -1461,8 +1405,6 @@ public interface HttpFields extends Iterable<HttpField>
             @Override
             public void remove()
             {
-                if (_readOnly)
-                    return;
                 if (_current < 0)
                     throw new IllegalStateException();
                 Mutable.this.remove(_current);
@@ -1473,8 +1415,6 @@ public interface HttpFields extends Iterable<HttpField>
             @Override
             public void set(HttpField field)
             {
-                if (_readOnly)
-                    return;
                 if (_current < 0)
                     throw new IllegalStateException();
                 if (field == null)
@@ -1508,7 +1448,7 @@ public interface HttpFields extends Iterable<HttpField>
         }
 
         @Override
-        public Immutable asImmutable()
+        public HttpFields asImmutable()
         {
             return this;
         }

@@ -40,6 +40,7 @@ import org.eclipse.jetty.http.HttpStatus;
 import org.eclipse.jetty.http.HttpURI;
 import org.eclipse.jetty.http.HttpVersion;
 import org.eclipse.jetty.http.MetaData;
+import org.eclipse.jetty.http.MimeTypes;
 import org.eclipse.jetty.http.PreEncodedHttpField;
 import org.eclipse.jetty.http.UriCompliance;
 import org.eclipse.jetty.io.AbstractConnection;
@@ -669,11 +670,11 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
             return _callback.getInvocationType();
         }
 
-        private boolean reset(MetaData.Request request, MetaData.Response info, ByteBuffer content, boolean last, Callback callback)
+        private boolean reset(MetaData.Request request, MetaData.Response response, ByteBuffer content, boolean last, Callback callback)
         {
             if (reset())
             {
-                _info = info;
+                _info = response;
                 _head = request != null && HttpMethod.HEAD.is(request.getMethod());
                 _content = content;
                 _lastContent = last;
@@ -686,6 +687,14 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
 
                 return true;
             }
+
+            if (isClosed() && response == null && last && content == null)
+            {
+                callback.succeeded();
+                return false;
+            }
+
+            LOG.warn("reset failed {}", this);
 
             if (isClosed())
                 callback.failed(new EofException());
@@ -853,7 +862,7 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
         @Override
         protected void onCompleteSuccess()
         {
-            boolean upgrading = _channel.getRequest().getAttribute(Channel.UPGRADE_CONNECTION_ATTRIBUTE) != null;
+            boolean upgrading = _channel.getRequest() != null && _channel.getRequest().getAttribute(Channel.UPGRADE_CONNECTION_ATTRIBUTE) != null;
             release().succeeded();
             // If successfully upgraded it is responsibility of the next protocol to close the connection.
             if (_shutdownOut && !upgrading)
@@ -889,8 +898,10 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
         @Override
         public void startRequest(String method, String uri, HttpVersion version)
         {
-            if (!_stream.compareAndSet(null, new Http1Stream(_headers, method, uri, version)))
+            Http1Stream stream = new Http1Stream(_headers, method, uri, version);
+            if (!_stream.compareAndSet(null, stream))
                 throw new IllegalStateException("Stream pending");
+            _channel.bind(stream);
         }
 
         @Override
@@ -957,18 +968,26 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
         @Override
         public void earlyEOF()
         {
-            // TODO ????
+            if (LOG.isDebugEnabled())
+                LOG.debug("early EOF {}", HttpConnection.this);
+            _generator.setPersistent(false);
+            Http1Stream stream = _stream.getAndSet(null);
+            if (stream == null)
+                stream = new Http1Stream(_headers, "BAD", "/", HttpVersion.HTTP_1_1);
+            stream.sendError(HttpStatus.BAD_REQUEST_400, "early EOF");
         }
 
         @Override
         public void badMessage(BadMessageException failure)
         {
+            failure.printStackTrace();
+            if (LOG.isDebugEnabled())
+                LOG.debug("badMessage {} {}", HttpConnection.this, failure);
+            _generator.setPersistent(false);
             Http1Stream stream = _stream.getAndSet(null);
-            if (stream != null)
-                stream.send(new MetaData.Response(HttpVersion.HTTP_1_1, failure.getCode(), HttpFields.build().add(CONNECTION_CLOSE), 0),
-                    true, stream);
-            else
-                getEndPoint().close();
+            if (stream == null)
+                stream = new Http1Stream(_headers, "BAD", "/", HttpVersion.HTTP_1_1);
+            stream.sendError(failure.getCode(), failure.getReason());
         }
     }
 
@@ -976,6 +995,7 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
 
     private class Http1Stream implements Stream
     {
+        private final long _nanoTimestamp = System.nanoTime();
         private final HttpFields.Mutable _headerBuilder;
         private final String _method;
         private final HttpURI.Mutable _uri;
@@ -998,7 +1018,7 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
         {
             _headerBuilder = headerBuilder;
             _method = method;
-            _uri = HttpURI.build(uri);
+            _uri = uri == null ? null : HttpURI.build(uri);
             _version = version;
         }
 
@@ -1092,7 +1112,7 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
 
             _request = new MetaData.Request(_method, _uri.asImmutable(), _version, _headerBuilder, _contentLength);
 
-            Runnable handle = _channel.onRequest(_request, this);
+            Runnable handle = _channel.onRequest(_request);
 
             if (_complianceViolations != null && !_complianceViolations.isEmpty())
             {
@@ -1128,7 +1148,7 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
                 {
                     if (_unknownExpectation)
                     {
-                        badMessage(new BadMessageException(HttpStatus.EXPECTATION_FAILED_417));
+                        _channel.badMessage(new BadMessageException(HttpStatus.EXPECTATION_FAILED_417));
                         return null; // TODO ???
                     }
 
@@ -1179,13 +1199,14 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
         @Override
         public String getId()
         {
+            // TODO
             return null;
         }
 
         @Override
         public long getNanoTimeStamp()
         {
-            return 0;
+            return _nanoTimestamp;
         }
 
         @Override
@@ -1195,7 +1216,7 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
                 parseAndFillForContent();
 
             Content content = _content;
-            _content = content.next();
+            _content = content == null ? null : content.next();
             return content;
         }
 
@@ -1204,12 +1225,14 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
         {
             if (_content != null)
             {
+                // TODO stack overflow in channel by mutually excluding callbacks
                 _channel.onContentAvailable();
                 return;
             }
             parseAndFillForContent();
             if (_content != null)
             {
+                // TODO stack overflow in channel by mutually excluding callbacks
                 _channel.onContentAvailable();
                 return;
             }
@@ -1233,6 +1256,10 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
                     callback.succeeded();
                     return;
                 }
+            }
+            else if (_generator.isCommitted())
+            {
+                callback.failed(new IllegalStateException("Committed"));
             }
             else
             {
@@ -1264,8 +1291,7 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
         @Override
         public boolean isComplete()
         {
-            // TODO
-            return _parser.isStart() || _parser.isTerminated();
+            return _stream.get() != this;
         }
 
         @Override
@@ -1359,19 +1385,36 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
         {
             Http1Stream stream = _stream.getAndSet(null);
             if (stream == null)
-                return; // TODO log
+            {
+                if (LOG.isDebugEnabled())
+                    LOG.debug("ignored", x);
+                return;
+            }
 
-            if (LOG.isDebugEnabled())
-                LOG.debug("failed {} {}", HttpConnection.this, x);
-            // Do a direct close of the output, as this may indicate to a client that the
-            // response is bad either with RST or by abnormal completion of chunked response.
-            getEndPoint().close();
+            // TODO request log?
+            stream.send(new MetaData.Response(HttpVersion.HTTP_1_1, INTERNAL_SERVER_ERROR_500, HttpFields.build().add(CONNECTION_CLOSE), 0),
+                    true, Callback.NOOP);
         }
 
         @Override
         public InvocationType getInvocationType()
         {
             return Stream.super.getInvocationType();
+        }
+
+        private void sendError(int status, String reason)
+        {
+            HttpFields.Mutable headers = HttpFields.build().add(CONNECTION_CLOSE);
+            ByteBuffer content = BufferUtil.EMPTY_BUFFER;
+            if (reason == null)
+                reason = HttpStatus.getMessage(status);
+            if (!HttpStatus.hasNoBody(status))
+            {
+                headers.put(HttpHeader.CONTENT_TYPE, MimeTypes.Type.TEXT_HTML_8859_1.asString());
+                content = BufferUtil.toBuffer("<h1>Bad Message " + status + "</h1><pre>reason: " + reason + "</pre>");
+            }
+
+            this.send(new MetaData.Response(HttpVersion.HTTP_1_1, status, headers, content.remaining()), true, this, content);
         }
     }
 }

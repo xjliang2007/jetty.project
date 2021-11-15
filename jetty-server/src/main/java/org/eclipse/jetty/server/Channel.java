@@ -15,6 +15,7 @@ package org.eclipse.jetty.server;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
@@ -62,6 +63,12 @@ public class Channel extends AttributesMap
         _connectionMetaData = connectionMetaData;
     }
 
+    public void bind(Stream stream)
+    {
+        if (!_stream.compareAndSet(null, stream))
+            throw new IllegalStateException("Stream pending");
+    }
+
     public Server getServer()
     {
         return _server;
@@ -87,15 +94,12 @@ public class Channel extends AttributesMap
         return _request.stream();
     }
 
-    public Runnable onRequest(MetaData.Request request, Stream stream)
+    public Runnable onRequest(MetaData.Request request)
     {
         if (LOG.isDebugEnabled())
-            LOG.debug("onRequest {} {}", request, stream);
-        if (!_stream.compareAndSet(null, stream))
-            throw new IllegalStateException("Stream pending");
+            LOG.debug("onRequest {} {}", request, this);
 
         _requests.incrementAndGet();
-
         _request = new ChannelRequest(request);
         _response = new ChannelResponse();
 
@@ -125,6 +129,7 @@ public class Channel extends AttributesMap
                 });
         }
 
+        // TODO invocation type of this Runnable
         return this::handle;
     }
 
@@ -149,6 +154,11 @@ public class Channel extends AttributesMap
         return onContentAvailable == null
             ? Invocable.InvocationType.BLOCKING
             : Invocable.getInvocationType(onContentAvailable);
+    }
+
+    public Runnable onIdleTimeout(TimeoutException t)
+    {
+        return null;
     }
 
     public Runnable onConnectionClose(Throwable failed)
@@ -216,41 +226,8 @@ public class Channel extends AttributesMap
 
     private void handle()
     {
-        try
-        {
-            if (!_server.handle(_request, _response))
-            {
-                if (_response.isCommitted())
-                {
-                    _request.failed(new IllegalStateException("Not Completed"));
-                }
-                else
-                {
-                    _response.reset();
-                    _response.setStatus(404);
-                    _request.succeeded();
-                }
-            }
-        }
-        catch (Throwable t)
-        {
-            handleException(t);
-        }
-    }
-
-    protected void handleException(Throwable t)
-    {
-        if (_response.isCommitted())
-        {
-            _request.failed(t == null ? new IllegalStateException() : t);
-        }
-        else
-        {
-            // TODO error page?
-            _response.reset();
-            _response.setStatus(500);
-            _request.succeeded();
-        }
+        if (!_server.handle(_request, _response))
+            throw new IllegalStateException();
     }
 
     private void notifyConnectionClose(Consumer<Throwable> onConnectionComplete, Throwable failed)
@@ -376,25 +353,25 @@ public class Channel extends AttributesMap
         @Override
         public void succeeded()
         {
-            Stream s = _stream.getAndSet(null);
-            if (s == null)
+            Stream stream = _stream.getAndSet(null);
+            if (stream == null)
                 return;
 
             // Cannot handle trailers after succeeded
             _onTrailers.set(null);
 
             // Commit and complete the response
-            s.send(_response.commitResponse(true), true, Callback.from(() ->
+            stream.send(_response.commitResponse(true), true, Callback.from(() ->
             {
                 // ensure the request is consumed
-                Throwable unconsumed = s.consumeAll();
+                Throwable unconsumed = stream.consumeAll();
                 if (LOG.isDebugEnabled())
                     LOG.debug("consumeAll {} ", this, unconsumed);
                 if (unconsumed != null && getConnectionMetaData().isPersistent())
-                    s.failed(unconsumed);
+                    stream.failed(unconsumed);
                 else
-                    s.succeeded();
-            }, s::failed));
+                    stream.succeeded();
+            }, stream::failed));
         }
 
         @Override
@@ -404,6 +381,8 @@ public class Channel extends AttributesMap
             // This is equivalent to the previous HttpTransport.abort(Throwable), so we don't need to do much clean up
             // as channel will be shutdown and thrown away.
             Stream s = _stream.getAndSet(null);
+            if (LOG.isDebugEnabled())
+                LOG.debug("failed {} {}", s, x);
             if (s != null)
                 s.failed(x);
         }
@@ -425,8 +404,8 @@ public class Channel extends AttributesMap
         //      Would we be better to synchronise??
         //      Or maybe just not be thread safe?
         private final AtomicReference<BiConsumer<Request, Response>> _onCommit = new AtomicReference<>(UNCOMMITTED);
-        private final HttpFields.Mutable _headers = HttpFields.build(); // TODO init
-        private final AtomicReference<HttpFields> _trailers = new AtomicReference<>();
+        private final ResponseHttpFields _headers = new ResponseHttpFields();
+        private final AtomicReference<ResponseHttpFields> _trailers = new AtomicReference<>();
         private final ChannelRequest _request = Channel.this._request;
         private long _written;
         private long _contentLength = -1L;
@@ -479,18 +458,18 @@ public class Channel extends AttributesMap
             {
                 // TODO check if trailers allowed in version and transport?
                 if (t == null)
-                    return HttpFields.build();
+                    return new ResponseHttpFields();
                 return t;
             });
 
-            if (trailers instanceof HttpFields.Mutable)
-                return (HttpFields.Mutable)trailers;
+            if (trailers instanceof ResponseHttpFields)
+                return (ResponseHttpFields)trailers;
             return null;
         }
 
         private HttpFields takeTrailers()
         {
-            HttpFields trailers = _trailers.get();
+            ResponseHttpFields trailers = _trailers.get();
             if (trailers != null)
                 trailers.toReadOnly();
             return trailers;

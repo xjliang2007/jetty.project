@@ -30,6 +30,7 @@ public interface Stream extends Callback
 
     void demandContent(); // Calls back on Channel#onDataAvailable
 
+    // TODO add MetaData.Request request.
     void send(MetaData.Response response, boolean last, Callback callback, ByteBuffer... content);
 
     boolean isPushSupported();

@@ -69,11 +69,11 @@ public class ChannelTest
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
         Channel channel = new Channel(server, connectionMetaData);
+        MockStream stream = new MockStream(channel);
 
         HttpFields fields = HttpFields.build().add(HttpHeader.HOST, "localhost").asImmutable();
         MetaData.Request request = new MetaData.Request("GET", HttpURI.from("http://localhost/"), HttpVersion.HTTP_1_1, fields, 0);
-        MockStream stream = new MockStream(channel);
-        Runnable task = channel.onRequest(request, stream);
+        Runnable task = channel.onRequest(request);
         task.run();
 
         assertThat(stream.isComplete(), is(true));
@@ -93,8 +93,6 @@ public class ChannelTest
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
         Channel channel = new Channel(server, connectionMetaData);
-        HttpFields fields = HttpFields.build().add(HttpHeader.HOST, "localhost").asImmutable();
-        MetaData.Request request = new MetaData.Request("GET", HttpURI.from("http://localhost/"), HttpVersion.HTTP_1_1, fields, 0);
         AtomicReference<Callback> sendCB = new AtomicReference<>();
         MockStream stream = new MockStream(channel)
         {
@@ -105,7 +103,11 @@ public class ChannelTest
                 super.send(response, last, Callback.NOOP, content);
             }
         };
-        Runnable task = channel.onRequest(request, stream);
+
+        HttpFields fields = HttpFields.build().add(HttpHeader.HOST, "localhost").asImmutable();
+        MetaData.Request request = new MetaData.Request("GET", HttpURI.from("http://localhost/"), HttpVersion.HTTP_1_1, fields, 0);
+
+        Runnable task = channel.onRequest(request);
         task.run();
         assertThat(stream.isComplete(), is(false));
 
@@ -128,6 +130,7 @@ public class ChannelTest
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
         Channel channel = new Channel(server, connectionMetaData);
+        MockStream stream = new MockStream(channel, false);
 
         String message = "ECHO Echo echo";
         ByteBuffer body = BufferUtil.toBuffer(message);
@@ -136,10 +139,10 @@ public class ChannelTest
             .putLongField(HttpHeader.CONTENT_LENGTH, body.remaining())
             .add(HttpHeader.CONTENT_TYPE, MimeTypes.Type.TEXT_PLAIN_8859_1.asString())
             .asImmutable();
+        stream.addContent(body, true);
         MetaData.Request request = new MetaData.Request("POST", HttpURI.from("http://localhost/"), HttpVersion.HTTP_1_1, fields, 0);
-        MockStream stream = new MockStream(channel, body);
 
-        Runnable task = channel.onRequest(request, stream);
+        Runnable task = channel.onRequest(request);
         task.run();
 
         assertThat(stream.isComplete(), is(true));
@@ -159,16 +162,7 @@ public class ChannelTest
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
         Channel channel = new Channel(server, connectionMetaData);
-
         String[] parts = new String[] {"ECHO ", "Echo ", "echo"};
-        String message = String.join("", parts);
-        ByteBuffer body = BufferUtil.toBuffer(message);
-        HttpFields fields = HttpFields.build()
-            .add(HttpHeader.HOST, "localhost")
-            .putLongField(HttpHeader.CONTENT_LENGTH, body.remaining())
-            .add(HttpHeader.CONTENT_TYPE, MimeTypes.Type.TEXT_PLAIN_8859_1.asString())
-            .asImmutable();
-        MetaData.Request request = new MetaData.Request("POST", HttpURI.from("http://localhost/"), HttpVersion.HTTP_1_1, fields, 0);
         MockStream stream = new MockStream(channel, false)
         {
             int i = 0;
@@ -181,7 +175,16 @@ public class ChannelTest
             }
         };
 
-        Runnable task = channel.onRequest(request, stream);
+        String message = String.join("", parts);
+        ByteBuffer body = BufferUtil.toBuffer(message);
+        HttpFields fields = HttpFields.build()
+            .add(HttpHeader.HOST, "localhost")
+            .putLongField(HttpHeader.CONTENT_LENGTH, body.remaining())
+            .add(HttpHeader.CONTENT_TYPE, MimeTypes.Type.TEXT_PLAIN_8859_1.asString())
+            .asImmutable();
+        MetaData.Request request = new MetaData.Request("POST", HttpURI.from("http://localhost/"), HttpVersion.HTTP_1_1, fields, 0);
+
+        Runnable task = channel.onRequest(request);
         task.run();
 
         assertThat(stream.isComplete(), is(true));
@@ -201,16 +204,7 @@ public class ChannelTest
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
         Channel channel = new Channel(server, connectionMetaData);
-
         String[] parts = new String[] {"ECHO ", "Echo ", "echo"};
-        String message = String.join("", parts);
-        ByteBuffer body = BufferUtil.toBuffer(message);
-        HttpFields fields = HttpFields.build()
-            .add(HttpHeader.HOST, "localhost")
-            .putLongField(HttpHeader.CONTENT_LENGTH, body.remaining())
-            .add(HttpHeader.CONTENT_TYPE, MimeTypes.Type.TEXT_PLAIN_8859_1.asString())
-            .asImmutable();
-        MetaData.Request request = new MetaData.Request("POST", HttpURI.from("http://localhost/"), HttpVersion.HTTP_1_1, fields, 0);
         AtomicReference<Callback> sendCB = new AtomicReference<>();
         MockStream stream = new MockStream(channel, false)
         {
@@ -222,7 +216,16 @@ public class ChannelTest
             }
         };
 
-        Runnable task = channel.onRequest(request, stream);
+        String message = String.join("", parts);
+        ByteBuffer body = BufferUtil.toBuffer(message);
+        HttpFields fields = HttpFields.build()
+            .add(HttpHeader.HOST, "localhost")
+            .putLongField(HttpHeader.CONTENT_LENGTH, body.remaining())
+            .add(HttpHeader.CONTENT_TYPE, MimeTypes.Type.TEXT_PLAIN_8859_1.asString())
+            .asImmutable();
+        MetaData.Request request = new MetaData.Request("POST", HttpURI.from("http://localhost/"), HttpVersion.HTTP_1_1, fields, 0);
+
+        Runnable task = channel.onRequest(request);
         assertThat(stream.isComplete(), is(false));
         assertThat(stream.isDemanding(), is(false));
         assertThat(sendCB.get(), nullValue());
@@ -282,10 +285,11 @@ public class ChannelTest
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
         Channel channel = new Channel(server, connectionMetaData);
+        MockStream stream = new MockStream(channel);
+
         HttpFields fields = HttpFields.build().add(HttpHeader.HOST, "localhost").asImmutable();
         MetaData.Request request = new MetaData.Request("GET", HttpURI.from("http://localhost/"), HttpVersion.HTTP_1_1, fields, 0);
-        MockStream stream = new MockStream(channel);
-        Runnable task = channel.onRequest(request, stream);
+        Runnable task = channel.onRequest(request);
         task.run();
 
         assertThat(stream.isComplete(), is(true));
@@ -312,10 +316,11 @@ public class ChannelTest
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
         Channel channel = new Channel(server, connectionMetaData);
+        MockStream stream = new MockStream(channel);
+
         HttpFields fields = HttpFields.build().add(HttpHeader.HOST, "localhost").asImmutable();
         MetaData.Request request = new MetaData.Request("GET", HttpURI.from("http://localhost/"), HttpVersion.HTTP_1_1, fields, 0);
-        MockStream stream = new MockStream(channel);
-        Runnable task = channel.onRequest(request, stream);
+        Runnable task = channel.onRequest(request);
         task.run();
 
         assertThat(stream.isComplete(), is(true));
@@ -338,7 +343,7 @@ public class ChannelTest
                 response.setContentLength(10);
                 response.write(false, Callback.from(() ->
                 {
-                    throw new UnsupportedOperationException("testing");
+                    throw new Error("testing");
                 }));
                 return true;
             }
@@ -348,10 +353,11 @@ public class ChannelTest
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
         Channel channel = new Channel(server, connectionMetaData);
+        MockStream stream = new MockStream(channel);
+
         HttpFields fields = HttpFields.build().add(HttpHeader.HOST, "localhost").asImmutable();
         MetaData.Request request = new MetaData.Request("GET", HttpURI.from("http://localhost/"), HttpVersion.HTTP_1_1, fields, 0);
-        MockStream stream = new MockStream(channel);
-        Runnable task = channel.onRequest(request, stream);
+        Runnable task = channel.onRequest(request);
         task.run();
 
         assertThat(stream.isComplete(), is(true));
@@ -377,10 +383,11 @@ public class ChannelTest
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
         Channel channel = new Channel(server, connectionMetaData);
+        MockStream stream = new MockStream(channel);
+
         HttpFields fields = HttpFields.build().add(HttpHeader.HOST, "localhost").asImmutable();
         MetaData.Request request = new MetaData.Request("GET", HttpURI.from("http://localhost/"), HttpVersion.HTTP_1_1, fields, 0);
-        MockStream stream = new MockStream(channel);
-        Runnable task = channel.onRequest(request, stream);
+        Runnable task = channel.onRequest(request);
 
         task.run();
         assertThat(stream.isComplete(), is(true));
@@ -409,10 +416,11 @@ public class ChannelTest
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
         Channel channel = new Channel(server, connectionMetaData);
+        MockStream stream = new MockStream(channel);
+
         HttpFields fields = HttpFields.build().add(HttpHeader.HOST, "localhost").asImmutable();
         MetaData.Request request = new MetaData.Request("GET", HttpURI.from("http://localhost/"), HttpVersion.HTTP_1_1, fields, 0);
-        MockStream stream = new MockStream(channel);
-        Runnable task = channel.onRequest(request, stream);
+        Runnable task = channel.onRequest(request);
         task.run();
 
         assertThat(stream.isComplete(), is(true));
@@ -439,10 +447,11 @@ public class ChannelTest
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
         Channel channel = new Channel(server, connectionMetaData);
+        MockStream stream = new MockStream(channel);
+
         HttpFields fields = HttpFields.build().add(HttpHeader.HOST, "localhost").asImmutable();
         MetaData.Request request = new MetaData.Request("GET", HttpURI.from("http://localhost/"), HttpVersion.HTTP_1_1, fields, 0);
-        MockStream stream = new MockStream(channel);
-        Runnable task = channel.onRequest(request, stream);
+        Runnable task = channel.onRequest(request);
         task.run();
 
         assertThat(stream.isComplete(), is(true));
@@ -469,10 +478,11 @@ public class ChannelTest
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
         Channel channel = new Channel(server, connectionMetaData);
+        MockStream stream = new MockStream(channel);
+
         HttpFields fields = HttpFields.build().add(HttpHeader.HOST, "localhost").asImmutable();
         MetaData.Request request = new MetaData.Request("GET", HttpURI.from("http://localhost/"), HttpVersion.HTTP_1_1, fields, 0);
-        MockStream stream = new MockStream(channel);
-        Runnable task = channel.onRequest(request, stream);
+        Runnable task = channel.onRequest(request);
         task.run();
 
         assertThat(stream.isComplete(), is(true));
@@ -499,10 +509,11 @@ public class ChannelTest
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
         Channel channel = new Channel(server, connectionMetaData);
+        MockStream stream = new MockStream(channel);
+
         HttpFields fields = HttpFields.build().add(HttpHeader.HOST, "localhost").asImmutable();
         MetaData.Request request = new MetaData.Request("GET", HttpURI.from("http://localhost/"), HttpVersion.HTTP_1_1, fields, 0);
-        MockStream stream = new MockStream(channel);
-        Runnable task = channel.onRequest(request, stream);
+        Runnable task = channel.onRequest(request);
         task.run();
 
         assertThat(stream.isComplete(), is(true));
@@ -520,6 +531,7 @@ public class ChannelTest
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
         Channel channel = new Channel(server, connectionMetaData);
+        MockStream stream = new MockStream(channel, false);
 
         String message = "ECHO Echo echo";
         ByteBuffer body = BufferUtil.toBuffer(message);
@@ -529,9 +541,9 @@ public class ChannelTest
             .add(HttpHeader.CONTENT_TYPE, MimeTypes.Type.TEXT_PLAIN_8859_1.asString())
             .asImmutable();
         MetaData.Request request = new MetaData.Request("POST", HttpURI.from("http://localhost/"), HttpVersion.HTTP_1_1, fields, 0);
-        MockStream stream = new MockStream(channel, body);
+        stream.addContent(body, true);
 
-        Runnable task = channel.onRequest(request, stream);
+        Runnable task = channel.onRequest(request);
         task.run();
 
         assertThat(stream.isComplete(), is(true));
@@ -565,15 +577,15 @@ public class ChannelTest
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
         Channel channel = new Channel(server, connectionMetaData);
+        MockStream stream = new MockStream(channel, false);
 
         HttpFields fields = HttpFields.build()
             .add(HttpHeader.HOST, "localhost")
             .putLongField(HttpHeader.CONTENT_LENGTH, 10)
             .asImmutable();
         MetaData.Request request = new MetaData.Request("POST", HttpURI.from("http://localhost/"), HttpVersion.HTTP_1_1, fields, 0);
-        MockStream stream = new MockStream(channel, false);
 
-        Runnable task = channel.onRequest(request, stream);
+        Runnable task = channel.onRequest(request);
         task.run();
 
         assertThat(stream.isComplete(), is(true));
@@ -609,15 +621,15 @@ public class ChannelTest
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
         Channel channel = new Channel(server, connectionMetaData);
+        MockStream stream = new MockStream(channel, false);
 
         HttpFields fields = HttpFields.build()
             .add(HttpHeader.HOST, "localhost")
             .putLongField(HttpHeader.CONTENT_LENGTH, 10)
             .asImmutable();
         MetaData.Request request = new MetaData.Request("POST", HttpURI.from("http://localhost/"), HttpVersion.HTTP_1_1, fields, 0);
-        MockStream stream = new MockStream(channel, false);
 
-        Runnable task = channel.onRequest(request, stream);
+        Runnable task = channel.onRequest(request);
         task.run();
 
         assertThat(stream.isComplete(), is(true));
@@ -640,6 +652,7 @@ public class ChannelTest
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
         Channel channel = new Channel(server, connectionMetaData);
+        MockStream stream = new MockStream(channel, false);
 
         String message = "ECHO Echo echo";
         ByteBuffer body = BufferUtil.toBuffer(message);
@@ -649,9 +662,9 @@ public class ChannelTest
             .add(HttpHeader.CONTENT_TYPE, MimeTypes.Type.TEXT_PLAIN_8859_1.asString())
             .asImmutable();
         MetaData.Request request = new MetaData.Request("POST", HttpURI.from("http://localhost/"), HttpVersion.HTTP_1_1, fields, 0);
-        MockStream stream = new MockStream(channel, body);
+        assertThat(stream.addContent(body, true), nullValue());
 
-        Runnable task = channel.onRequest(request, stream);
+        Runnable task = channel.onRequest(request);
         task.run();
 
         assertThat(stream.isComplete(), is(true));
@@ -665,7 +678,7 @@ public class ChannelTest
         fields = HttpFields.build().add(HttpHeader.HOST, "localhost").asImmutable();
         request = new MetaData.Request("GET", HttpURI.from("http://localhost/"), HttpVersion.HTTP_1_1, fields, 0);
         stream = new MockStream(channel);
-        task = channel.onRequest(request, stream);
+        task = channel.onRequest(request);
         task.run();
 
         assertThat(stream.isComplete(), is(true));
@@ -686,16 +699,6 @@ public class ChannelTest
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
         Channel channel = new Channel(server, connectionMetaData);
-
-        String[] parts = new String[] {"ECHO ", "Echo ", "echo"};
-        String message = String.join("", parts);
-        ByteBuffer body = BufferUtil.toBuffer(message);
-        HttpFields fields = HttpFields.build()
-            .add(HttpHeader.HOST, "localhost")
-            .putLongField(HttpHeader.CONTENT_LENGTH, body.remaining())
-            .add(HttpHeader.CONTENT_TYPE, MimeTypes.Type.TEXT_PLAIN_8859_1.asString())
-            .asImmutable();
-        MetaData.Request request = new MetaData.Request("POST", HttpURI.from("http://localhost/"), HttpVersion.HTTP_1_1, fields, 0);
         AtomicReference<Callback> sendCB = new AtomicReference<>();
         MockStream stream = new MockStream(channel, false)
         {
@@ -713,9 +716,18 @@ public class ChannelTest
             }
         };
 
+        String[] parts = new String[] {"ECHO ", "Echo ", "echo"};
+        String message = String.join("", parts);
+        ByteBuffer body = BufferUtil.toBuffer(message);
+        HttpFields fields = HttpFields.build()
+            .add(HttpHeader.HOST, "localhost")
+            .putLongField(HttpHeader.CONTENT_LENGTH, body.remaining())
+            .add(HttpHeader.CONTENT_TYPE, MimeTypes.Type.TEXT_PLAIN_8859_1.asString())
+            .asImmutable();
+        MetaData.Request request = new MetaData.Request("POST", HttpURI.from("http://localhost/"), HttpVersion.HTTP_1_1, fields, 0);
         assertThat(stream.addContent(BufferUtil.toBuffer(parts[0]), false), nullValue());
 
-        Runnable task = channel.onRequest(request, stream);
+        Runnable task = channel.onRequest(request);
 
         List<String> history = new ArrayList<>();
         channel.whenStreamEvent(s ->
@@ -841,17 +853,8 @@ public class ChannelTest
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
         Channel channel = new Channel(server, connectionMetaData);
-
         String[] parts = new String[] {"ECHO ", "Echo ", "echo"};
-        String message = String.join("", parts);
-        ByteBuffer body = BufferUtil.toBuffer(message);
         HttpFields trailers = HttpFields.build().add("Trailer", "value").asImmutable();
-        HttpFields fields = HttpFields.build()
-            .add(HttpHeader.HOST, "localhost")
-            .putLongField(HttpHeader.CONTENT_LENGTH, body.remaining())
-            .add(HttpHeader.CONTENT_TYPE, MimeTypes.Type.TEXT_PLAIN_8859_1.asString())
-            .asImmutable();
-        MetaData.Request request = new MetaData.Request("POST", HttpURI.from("http://localhost/"), HttpVersion.HTTP_1_1, fields, 0);
         MockStream stream = new MockStream(channel, false)
         {
             int i = 0;
@@ -868,7 +871,16 @@ public class ChannelTest
             }
         };
 
-        Runnable task = channel.onRequest(request, stream);
+        String message = String.join("", parts);
+        ByteBuffer body = BufferUtil.toBuffer(message);
+        HttpFields fields = HttpFields.build()
+            .add(HttpHeader.HOST, "localhost")
+            .putLongField(HttpHeader.CONTENT_LENGTH, body.remaining())
+            .add(HttpHeader.CONTENT_TYPE, MimeTypes.Type.TEXT_PLAIN_8859_1.asString())
+            .asImmutable();
+        MetaData.Request request = new MetaData.Request("POST", HttpURI.from("http://localhost/"), HttpVersion.HTTP_1_1, fields, 0);
+
+        Runnable task = channel.onRequest(request);
         task.run();
 
         assertThat(stream.isComplete(), is(true));
