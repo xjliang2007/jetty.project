@@ -1226,14 +1226,16 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
             if (_content != null)
             {
                 Runnable onContentAvailable = _channel.onContentAvailable();
-                onContentAvailable.run(); // TODO avoid stack overflow
+                if (onContentAvailable != null)
+                    onContentAvailable.run();
                 return;
             }
             parseAndFillForContent();
             if (_content != null)
             {
                 Runnable onContentAvailable = _channel.onContentAvailable();
-                onContentAvailable.run(); // TODO avoid stack overflow
+                if (onContentAvailable != null)
+                    onContentAvailable.run();
                 return;
             }
 

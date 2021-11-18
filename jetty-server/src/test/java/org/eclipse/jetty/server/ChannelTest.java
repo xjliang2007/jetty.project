@@ -13,11 +13,16 @@
 
 package org.eclipse.jetty.server;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.LongAdder;
 
 import org.eclipse.jetty.http.HttpFields;
 import org.eclipse.jetty.http.HttpHeader;
@@ -896,4 +901,87 @@ public class ChannelTest
         assertThat(trailersRcv.get("Echo"), equalTo("Trailers"));
         assertThat(trailersRcv.get("Some"), equalTo("value"));
     }
+
+    @Test
+    public void testDemandRecursion() throws Exception
+    {
+        server.setHandler(new Handler.Abstract()
+        {
+            @Override
+            public boolean handle(Request request, Response response)
+            {
+                LongAdder contentSize = new LongAdder();
+                CountDownLatch latch = new CountDownLatch(1);
+                Runnable onContentAvailable = new Runnable()
+                {
+                    @Override
+                    public void run()
+                    {
+                        Content content = request.readContent();
+                        contentSize.add(content.remaining());
+                        content.release();
+                        if (content.isLast())
+                            latch.countDown();
+                        else
+                            request.demandContent(this);
+                    }
+                };
+                request.demandContent(onContentAvailable);
+                try
+                {
+                    if (!latch.await(30, TimeUnit.SECONDS))
+                        request.failed(new IOException());
+                }
+                catch (Exception e)
+                {
+                    request.failed(e);
+                }
+
+                response.setStatus(200);
+                response.write(true, request, BufferUtil.toBuffer("contentSize=" + contentSize.longValue()));
+                return true;
+            }
+        });
+        server.start();
+
+        ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
+        Channel channel = new Channel(server, connectionMetaData, new HttpConfiguration());
+        ByteBuffer data = BufferUtil.toBuffer("data");
+        final int chunks = 100000;
+        AtomicInteger count = new AtomicInteger(chunks);
+        MockStream stream = new MockStream(channel, false)
+        {
+            @Override
+            public Content readContent()
+            {
+                int c = count.decrementAndGet();
+                if (c >= 0)
+                    return Content.from(data.slice(), false);
+                return Content.EOF;
+            }
+
+            @Override
+            public void demandContent()
+            {
+                Runnable task = channel.onContentAvailable();
+                if (task != null)
+                    task.run();
+            }
+        };
+
+        HttpFields fields = HttpFields.build()
+            .add(HttpHeader.HOST, "localhost")
+            .asImmutable();
+        MetaData.Request request = new MetaData.Request("POST", HttpURI.from("http://localhost/"), HttpVersion.HTTP_1_1, fields, -1);
+
+        Runnable task = channel.onRequest(request);
+        task.run();
+
+        assertThat(stream.isComplete(), is(true));
+        assertThat(stream.getFailure(), nullValue());
+        assertThat(stream.getResponse(), notNullValue());
+        assertThat(stream.getResponse().getStatus(), equalTo(200));
+        assertThat(BufferUtil.toString(stream.getResponseContent()), equalTo("contentSize=" + (chunks * data.remaining())));
+    }
+
 }
