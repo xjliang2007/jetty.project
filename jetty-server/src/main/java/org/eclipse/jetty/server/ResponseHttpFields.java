@@ -35,6 +35,12 @@ class ResponseHttpFields extends HttpFields.Mutable
         return this;
     }
 
+    public void recycle()
+    {
+        _readOnly = false;
+        super.clear();
+    }
+
     @Override
     public Mutable add(String name, String value)
     {

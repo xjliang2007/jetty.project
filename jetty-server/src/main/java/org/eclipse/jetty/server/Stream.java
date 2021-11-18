@@ -73,6 +73,11 @@ public interface Stream extends Callback
             _wrapped = wrapped;
         }
 
+        public Stream getWrapped()
+        {
+            return _wrapped;
+        }
+
         public final String getId()
         {
             return _wrapped.getId();

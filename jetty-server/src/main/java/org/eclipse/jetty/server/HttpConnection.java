@@ -73,7 +73,7 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
     public static final HttpField CONNECTION_KEEP_ALIVE = new PreEncodedHttpField(HttpHeader.CONNECTION, HttpHeaderValue.KEEP_ALIVE.asString());
     private static final ThreadLocal<HttpConnection> __currentConnection = new ThreadLocal<>();
 
-    private final HttpConfiguration _config;
+    private final HttpConfiguration _configuration;
     private final Connector _connector;
     private final ByteBufferPool _bufferPool;
     private final RetainableByteBufferPool _retainableByteBufferPool;
@@ -111,16 +111,16 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
         return last;
     }
 
-    public HttpConnection(HttpConfiguration config, Connector connector, EndPoint endPoint, boolean recordComplianceViolations)
+    public HttpConnection(HttpConfiguration configuration, Connector connector, EndPoint endPoint, boolean recordComplianceViolations)
     {
         super(endPoint, connector.getExecutor());
-        _config = config;
+        _configuration = configuration;
         _connector = connector;
         _bufferPool = _connector.getByteBufferPool();
         _retainableByteBufferPool = RetainableByteBufferPool.findOrAdapt(connector, _bufferPool);
         _generator = newHttpGenerator();
-        _channel = new Http1Channel(connector.getServer());
-        _parser = newHttpParser(config.getHttpCompliance());
+        _channel = new Http1Channel(connector.getServer(), configuration);
+        _parser = newHttpParser(configuration.getHttpCompliance());
         _recordHttpComplianceViolations = recordComplianceViolations;
         if (LOG.isDebugEnabled())
             LOG.debug("New HTTP Connection {}", this);
@@ -128,7 +128,7 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
 
     public HttpConfiguration getHttpConfiguration()
     {
-        return _config;
+        return _configuration;
     }
 
     public boolean isRecordHttpComplianceViolations()
@@ -138,7 +138,7 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
 
     protected HttpGenerator newHttpGenerator()
     {
-        return new HttpGenerator(_config.getSendServerVersion(), _config.getSendXPoweredBy());
+        return new HttpGenerator(_configuration.getSendServerVersion(), _configuration.getSendXPoweredBy());
     }
 
     protected HttpParser newHttpParser(HttpCompliance compliance)
@@ -294,12 +294,6 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
     public void setUseOutputDirectByteBuffers(boolean useOutputDirectByteBuffers)
     {
         _useOutputDirectByteBuffers = useOutputDirectByteBuffers;
-    }
-
-    void badMessage(Throwable cause)
-    {
-        // TODO
-        throw new UnsupportedOperationException();
     }
 
     @Override
@@ -729,15 +723,15 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
 
                     case NEED_HEADER:
                     {
-                        _header = _bufferPool.acquire(Math.min(_config.getResponseHeaderSize(), _config.getOutputBufferSize()), useDirectByteBuffers);
+                        _header = _bufferPool.acquire(Math.min(_configuration.getResponseHeaderSize(), _configuration.getOutputBufferSize()), useDirectByteBuffers);
                         continue;
                     }
                     case HEADER_OVERFLOW:
                     {
-                        if (_header.capacity() >= _config.getResponseHeaderSize())
+                        if (_header.capacity() >= _configuration.getResponseHeaderSize())
                             throw new BadMessageException(INTERNAL_SERVER_ERROR_500, "Response header too large");
                         releaseHeader();
-                        _header = _bufferPool.acquire(_config.getResponseHeaderSize(), useDirectByteBuffers);
+                        _header = _bufferPool.acquire(_configuration.getResponseHeaderSize(), useDirectByteBuffers);
                         continue;
                     }
                     case NEED_CHUNK:
@@ -748,7 +742,7 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
                     case NEED_CHUNK_TRAILER:
                     {
                         releaseChunk();
-                        _chunk = _bufferPool.acquire(_config.getResponseHeaderSize(), useDirectByteBuffers);
+                        _chunk = _bufferPool.acquire(_configuration.getResponseHeaderSize(), useDirectByteBuffers);
                         continue;
                     }
                     case FLUSH:
@@ -890,9 +884,9 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
         private HttpFields.Mutable _trailers;
         Runnable _onRequest;
 
-        public Http1Channel(Server server)
+        public Http1Channel(Server server, HttpConfiguration configuration)
         {
-            super(server, HttpConnection.this);
+            super(server, HttpConnection.this, configuration);
         }
 
         @Override
@@ -968,6 +962,8 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
         @Override
         public void earlyEOF()
         {
+            // TODO should any 400 error response be routed through the channel for logging?
+
             if (LOG.isDebugEnabled())
                 LOG.debug("early EOF {}", HttpConnection.this);
             _generator.setPersistent(false);
@@ -980,7 +976,8 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
         @Override
         public void badMessage(BadMessageException failure)
         {
-            failure.printStackTrace();
+            // TODO should any 400 error response be routed through the channel for logging?
+
             if (LOG.isDebugEnabled())
                 LOG.debug("badMessage {} {}", HttpConnection.this, failure);
             _generator.setPersistent(false);
@@ -1020,6 +1017,9 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
             _method = method;
             _uri = uri == null ? null : HttpURI.build(uri);
             _version = version;
+
+            if (_uri != null && _uri.getPath() == null && _uri.getScheme() != null && _uri.hasAuthority())
+                _uri.path("/");
         }
 
         public void parsedHeader(HttpField field)
@@ -1087,7 +1087,7 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
             UriCompliance compliance;
             if (_uri.hasViolations())
             {
-                compliance = _config.getUriCompliance();
+                compliance = _configuration.getUriCompliance();
                 String badMessage = UriCompliance.checkUriCompliance(compliance, _uri);
                 if (badMessage != null)
                     throw new BadMessageException(badMessage);
@@ -1179,9 +1179,9 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
                         HttpConnection.this.upgrade())
                         return null; // TODO ?
 
-                    badMessage(new BadMessageException(HttpStatus.UPGRADE_REQUIRED_426));
+                    // TODO?
                     _parser.close();
-                    return null; // TODO ?
+                    throw new BadMessageException(HttpStatus.UPGRADE_REQUIRED_426);
                 }
 
                 default:
@@ -1225,15 +1225,15 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
         {
             if (_content != null)
             {
-                // TODO stack overflow in channel by mutually excluding callbacks
-                _channel.onContentAvailable();
+                Runnable onContentAvailable = _channel.onContentAvailable();
+                onContentAvailable.run(); // TODO avoid stack overflow
                 return;
             }
             parseAndFillForContent();
             if (_content != null)
             {
-                // TODO stack overflow in channel by mutually excluding callbacks
-                _channel.onContentAvailable();
+                Runnable onContentAvailable = _channel.onContentAvailable();
+                onContentAvailable.run(); // TODO avoid stack overflow
                 return;
             }
 

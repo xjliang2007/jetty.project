@@ -15,22 +15,25 @@ package org.eclipse.jetty.server;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
-import java.util.function.UnaryOperator;
+import java.util.function.Function;
+import java.util.function.Supplier;
 
+import org.eclipse.jetty.http.BadMessageException;
 import org.eclipse.jetty.http.HttpFields;
 import org.eclipse.jetty.http.HttpHeader;
+import org.eclipse.jetty.http.HttpMethod;
 import org.eclipse.jetty.http.HttpURI;
 import org.eclipse.jetty.http.MetaData;
+import org.eclipse.jetty.http.UriCompliance;
 import org.eclipse.jetty.io.Connection;
 import org.eclipse.jetty.util.AttributesMap;
 import org.eclipse.jetty.util.Callback;
 import org.eclipse.jetty.util.HostPort;
+import org.eclipse.jetty.util.thread.AutoLock;
 import org.eclipse.jetty.util.thread.Invocable;
+import org.eclipse.jetty.util.thread.SerializedInvoker;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -49,24 +52,41 @@ public class Channel extends AttributesMap
 
     public static final String UPGRADE_CONNECTION_ATTRIBUTE = Channel.class.getName() + ".UPGRADE";
 
+    private final AutoLock _lock = new AutoLock();
     private final Server _server;
     private final ConnectionMetaData _connectionMetaData;
-    private final AtomicInteger _requests = new AtomicInteger();
-    private final AtomicReference<Consumer<Throwable>> _onConnectionClose = new AtomicReference<>();
-    private final AtomicReference<Stream> _stream = new AtomicReference<>();
+    private final HttpConfiguration _configuration;
+    private final SerializedInvoker _serializedInvocation;
+    private Stream _stream;
+    private int _requests;
+    private Consumer<Throwable> _onConnectionComplete;
     private ChannelRequest _request;
     private ChannelResponse _response;
 
-    public Channel(Server server, ConnectionMetaData connectionMetaData)
+    public Channel(Server server, ConnectionMetaData connectionMetaData, HttpConfiguration configuration)
     {
         _server = server;
         _connectionMetaData = connectionMetaData;
+        _configuration = configuration;
+        _serializedInvocation = new SerializedInvoker(_server.getThreadPool());
     }
 
     public void bind(Stream stream)
     {
-        if (!_stream.compareAndSet(null, stream))
-            throw new IllegalStateException("Stream pending");
+        try (AutoLock ignored = _lock.lock())
+        {
+            if (_stream != null)
+                throw new IllegalStateException("Stream pending");
+            _stream = stream;
+        }
+    }
+
+    public Stream getStream()
+    {
+        try (AutoLock ignored = _lock.lock())
+        {
+            return _request.stream();
+        }
     }
 
     public Server getServer()
@@ -89,129 +109,168 @@ public class Channel extends AttributesMap
         return _connectionMetaData.getConnector();
     }
 
-    public Stream getStream()
-    {
-        return _request.stream();
-    }
-
     public Runnable onRequest(MetaData.Request request)
     {
-        if (LOG.isDebugEnabled())
-            LOG.debug("onRequest {} {}", request, this);
-
-        _requests.incrementAndGet();
-        _request = new ChannelRequest(request);
-        _response = new ChannelResponse();
-
-        // Mock request log
-        RequestLog requestLog = _server.getRequestLog();
-        if (requestLog != null)
+        try (AutoLock ignored = _lock.lock())
         {
-            whenStreamEvent(s ->
-                new Stream.Wrapper(s)
-                {
-                    MetaData.Response _responseMeta;
+            if (LOG.isDebugEnabled())
+                LOG.debug("onRequest {} {}", request, this);
 
-                    @Override
-                    public void send(MetaData.Response response, boolean last, Callback callback, ByteBuffer... content)
-                    {
-                        if (response != null)
-                            _responseMeta = response;
-                        super.send(response, last, callback, content);
-                    }
+            _requests++;
+            _request = new ChannelRequest(request);
+            _response = new ChannelResponse();
 
-                    @Override
-                    public void succeeded()
-                    {
-                        requestLog.log(_request.getWrapper(), request, _responseMeta);
-                        super.succeeded();
-                    }
-                });
+            if (!_request.getPath().startsWith("/") && !HttpMethod.OPTIONS.is(request.getMethod()) && !HttpMethod.CONNECT.is(request.getMethod()))
+                throw new BadMessageException();
+
+            HttpURI uri = request.getURI();
+            if (uri.hasViolations())
+            {
+                String badMessage = UriCompliance.checkUriCompliance(_configuration.getUriCompliance(), uri);
+                if (badMessage != null)
+                    throw new BadMessageException(badMessage);
+            }
+
+            // TODO invocation type of this Runnable
+            //      currently the only way to do this would be to insist that Handler.handle never blocked and
+            //      returned a Runnable instead of a boolean.
+            //      If it is blocking, then it can't be mutually excluded from other callbacks
+            return this::handle;
         }
-
-        // TODO invocation type of this Runnable
-        return this::handle;
     }
 
     protected Request getRequest()
     {
-        return _request;
+        try (AutoLock ignored = _lock.lock())
+        {
+            return _request;
+        }
     }
 
     protected Response getResponse()
     {
-        return _response;
+        try (AutoLock ignored = _lock.lock())
+        {
+            return _response;
+        }
     }
 
     public Runnable onContentAvailable()
     {
-        return _request._onContent.getAndSet(null);
+        try (AutoLock ignored = _lock.lock())
+        {
+            if (_request == null)
+                return null;
+            Runnable onContent = _request._onContent;
+            _request._onContent = null;
+            return _serializedInvocation.invoke(onContent);
+        }
     }
 
     public Invocable.InvocationType getOnContentAvailableInvocationType()
     {
-        Runnable onContentAvailable = _request._onContent.get();
-        return onContentAvailable == null
-            ? Invocable.InvocationType.BLOCKING
-            : Invocable.getInvocationType(onContentAvailable);
+        // TODO Can this actually be done, as we may need to invoke other Runnables after onContent?
+        try (AutoLock ignored = _lock.lock())
+        {
+            return Invocable.getInvocationType(_request == null ? null : _request._onContent);
+        }
     }
 
-    public Runnable onIdleTimeout(TimeoutException t)
+    public boolean onIdleTimeout(long now, long timeoutNanos)
     {
-        return null;
+        // TODO check time against last activity and return true only if we really are idle.
+        //      If we return true, then onError will be called with a real exception... or is that too late????
+        return true;
+    }
+
+    public Runnable onError(Throwable x)
+    {
+        try (AutoLock ignored = _lock.lock())
+        {
+            if (LOG.isDebugEnabled())
+                LOG.debug("onError {} {}", this, x);
+
+            ChannelRequest request = _request;
+            if (request == null)
+                return null;
+
+            // TODO should we set up an Content.Error for the next readContent, or rely on Stream to do that?
+
+            // TODO if we are currently demanding, do we include a call to onDataAvailable in the return?
+            Runnable onDataAvailable = null;
+
+            // TODO if a write is in progress, do we break the linkage and fail the callback
+            Runnable writeFailure = null;
+
+            // TODO should we arrange for any subsequent writes to fail with this error or rely on the request.failed below?
+            Consumer<Throwable> onError = request._onError;
+            Runnable invokeOnError = onError == null ? null : () -> onError.accept(x);
+
+            // TODO we we always ultimately fail the request?
+            return _serializedInvocation.invoke(onDataAvailable, writeFailure, invokeOnError, () -> request.failed(x));
+        }
     }
 
     public Runnable onConnectionClose(Throwable failed)
     {
-        Stream stream = _stream.getAndSet(null);
-        if (stream != null)
-            stream.failed(failed);
-        notifyConnectionClose(_onConnectionClose.getAndSet(null), failed);
-        return null;
+        Stream stream;
+        Consumer<Throwable> onConnectionClose;
+        try (AutoLock ignored = _lock.lock())
+        {
+            stream = _stream;
+            _stream = null;
+            onConnectionClose = _onConnectionComplete;
+            _onConnectionComplete = null;
+        }
+
+        if (onConnectionClose == null)
+            return stream == null ? null : _serializedInvocation.invoke(() -> stream.failed(failed));
+
+        if (stream == null)
+            return _serializedInvocation.invoke(() -> onConnectionClose.accept(failed));
+
+        return _serializedInvocation.invoke(() -> stream.failed(failed), () -> onConnectionClose.accept(failed));
     }
 
-    public void whenStreamComplete(Consumer<Throwable> onComplete)
+    public void whenStreamEvent(Function<Stream, Stream.Wrapper> onStreamEvent)
     {
-        whenStreamEvent(s -> new Stream.Wrapper(s)
+        while (true)
         {
-            @Override
-            public void succeeded()
+            Stream stream;
+            try (AutoLock ignored = _lock.lock())
             {
-                super.succeeded();
-                onComplete.accept(null);
+                stream = _stream;
             }
-
-            @Override
-            public void failed(Throwable x)
-            {
-                super.failed(x);
-                onComplete.accept(x);
-            }
-        });
-    }
-
-    public void whenStreamEvent(UnaryOperator<Stream> onStreamEvent)
-    {
-        _stream.getAndUpdate(s ->
-        {
-            if (s == null)
+            if (_stream == null)
                 throw new IllegalStateException("No active stream");
-            s = onStreamEvent.apply(s);
-            if (s == null)
+            Stream.Wrapper combined = onStreamEvent.apply(stream);
+            if (combined == null || combined.getWrapped() != stream)
                 throw new IllegalArgumentException("Cannot remove stream");
-            return s;
-        });
+            try (AutoLock ignored = _lock.lock())
+            {
+                if (_stream != stream)
+                    continue;
+                _stream = combined;
+                break;
+            }
+        }
     }
 
     public void whenConnectionComplete(Consumer<Throwable> onComplete)
     {
-        if (!_onConnectionClose.compareAndSet(null, onComplete))
+        try (AutoLock ignored = _lock.lock())
         {
-            _onConnectionClose.getAndUpdate(l -> (failed) ->
+            if (_onConnectionComplete == null)
+                _onConnectionComplete = onComplete;
+            else
             {
-                notifyConnectionClose(l, failed);
-                notifyConnectionClose(onComplete, failed);
-            });
+                Consumer<Throwable> previous = _onConnectionComplete;
+                _onConnectionComplete = (failed) ->
+                {
+                    notifyConnectionClose(previous, failed);
+                    notifyConnectionClose(onComplete, failed);
+                };
+            }
         }
     }
 
@@ -247,13 +306,14 @@ public class Channel extends AttributesMap
 
     private class ChannelRequest extends AttributesMap implements Request
     {
-        private final MetaData.Request _metaData;
-        private final AtomicReference<Runnable> _onContent = new AtomicReference<>();
-        private final AtomicReference<Object> _onTrailers = new AtomicReference<>();
+        final MetaData.Request _metaData;
+        final String _id = Integer.toString(_requests);
+        Consumer<Throwable> _onError;
+        Runnable _onContent;
 
         private Request _wrapper = this;
 
-        private ChannelRequest(MetaData.Request metaData)
+        ChannelRequest(MetaData.Request metaData)
         {
             _metaData = metaData;
         }
@@ -275,22 +335,26 @@ public class Channel extends AttributesMap
         @Override
         public boolean isComplete()
         {
-            Stream s = _stream.get();
-            return s == null || s.isComplete();
+            try (AutoLock ignored = _lock.lock())
+            {
+                return _stream == null || _stream.isComplete();
+            }
         }
 
         Stream stream()
         {
-            Stream s = _stream.get();
-            if (s == null)
-                throw new IllegalStateException();
-            return s;
+            try (AutoLock ignored = _lock.lock())
+            {
+                if (_stream == null)
+                    throw new IllegalStateException();
+                return _stream;
+            }
         }
         
         @Override
         public String getId()
         {
-            return Integer.toString(_requests.get());
+            return _id;
         }
 
         @Override
@@ -320,7 +384,7 @@ public class Channel extends AttributesMap
         @Override
         public String getPath()
         {
-            return _metaData.getURI().getPath();
+            return _metaData.getURI().getDecodedPath();
         }
 
         @Override
@@ -344,21 +408,71 @@ public class Channel extends AttributesMap
         @Override
         public void demandContent(Runnable onContentAvailable)
         {
-            Runnable task = _onContent.getAndSet(onContentAvailable);
-            if (task != null && task != onContentAvailable)
-                throw new IllegalStateException();
+            try (AutoLock ignored = _lock.lock())
+            {
+                if (_onContent != null && _onContent != onContentAvailable)
+                    throw new IllegalArgumentException();
+                _onContent = onContentAvailable;
+            }
             stream().demandContent();
+        }
+
+        @Override
+        public void ifError(Consumer<Throwable> onError)
+        {
+            try (AutoLock ignored = _lock.lock())
+            {
+                if (_onError == null)
+                    _onError = onError;
+                else
+                {
+                    Consumer<Throwable> previous = _onError;
+                    _onError = throwable ->
+                    {
+                        try
+                        {
+                            previous.accept(throwable);
+                        }
+                        finally
+                        {
+                            onError.accept(throwable);
+                        }
+                    };
+                }
+            }
+        }
+
+        @Override
+        public void whenComplete(Callback onComplete)
+        {
+            whenStreamEvent(s -> new Stream.Wrapper(s)
+            {
+                @Override
+                public void succeeded()
+                {
+                    onComplete.succeeded();
+                }
+
+                @Override
+                public void failed(Throwable x)
+                {
+                    onComplete.failed(x);
+                }
+            });
         }
 
         @Override
         public void succeeded()
         {
-            Stream stream = _stream.getAndSet(null);
+            Stream stream;
+            try (AutoLock ignored = _lock.lock())
+            {
+                stream = _stream;
+                _stream = null;
+            }
+
             if (stream == null)
                 return;
-
-            // Cannot handle trailers after succeeded
-            _onTrailers.set(null);
 
             // Commit and complete the response
             stream.send(_response.commitResponse(true), true, Callback.from(() ->
@@ -377,14 +491,18 @@ public class Channel extends AttributesMap
         @Override
         public void failed(Throwable x)
         {
-            // TODO should we send a 500 if we are not committed?
             // This is equivalent to the previous HttpTransport.abort(Throwable), so we don't need to do much clean up
             // as channel will be shutdown and thrown away.
-            Stream s = _stream.getAndSet(null);
+            Stream stream;
+            try (AutoLock ignored = _lock.lock())
+            {
+                stream = _stream;
+                _stream = null;
+            }
             if (LOG.isDebugEnabled())
-                LOG.debug("failed {} {}", s, x);
-            if (s != null)
-                s.failed(x);
+                LOG.debug("failed {} {}", stream, x);
+            if (stream != null)
+                stream.failed(x);
         }
 
         @Override
@@ -403,10 +521,10 @@ public class Channel extends AttributesMap
         //      Multiple atomics are rarely race-free (eg _onCommit COMMITTED, but _headers not yet Immutable)
         //      Would we be better to synchronise??
         //      Or maybe just not be thread safe?
-        private final AtomicReference<BiConsumer<Request, Response>> _onCommit = new AtomicReference<>(UNCOMMITTED);
-        private final ResponseHttpFields _headers = new ResponseHttpFields();
-        private final AtomicReference<ResponseHttpFields> _trailers = new AtomicReference<>();
         private final ChannelRequest _request = Channel.this._request;
+        private final ResponseHttpFields _headers = new ResponseHttpFields();
+        private BiConsumer<Request, Response> _onCommit = UNCOMMITTED;
+        private ResponseHttpFields _trailers;
         private long _written;
         private long _contentLength = -1L;
         private Response _wrapper;
@@ -454,25 +572,24 @@ public class Channel extends AttributesMap
         @Override
         public HttpFields.Mutable getTrailers()
         {
-            HttpFields trailers = _trailers.updateAndGet(t ->
+            try (AutoLock ignored = _lock.lock())
             {
                 // TODO check if trailers allowed in version and transport?
-                if (t == null)
-                    return new ResponseHttpFields();
-                return t;
-            });
-
-            if (trailers instanceof ResponseHttpFields)
-                return (ResponseHttpFields)trailers;
-            return null;
+                if (_trailers == null)
+                    _trailers = new ResponseHttpFields();
+                return _trailers;
+            }
         }
 
         private HttpFields takeTrailers()
         {
-            ResponseHttpFields trailers = _trailers.get();
-            if (trailers != null)
-                trailers.toReadOnly();
-            return trailers;
+            try (AutoLock ignored = _lock.lock())
+            {
+                ResponseHttpFields trailers = _trailers;
+                if (trailers != null)
+                    trailers.toReadOnly();
+                return trailers;
+            }
         }
 
         @Override
@@ -522,66 +639,89 @@ public class Channel extends AttributesMap
         @Override
         public void whenCommitting(BiConsumer<Request, Response> onCommit)
         {
-            _onCommit.getAndUpdate(l ->
+            try (AutoLock ignored = _lock.lock())
             {
-                if (l == COMMITTED)
+                if (_onCommit == COMMITTED)
                     throw new IllegalStateException("Committed");
 
-                if (l == UNCOMMITTED)
-                    return onCommit;
-
-                return (request, response) ->
+                if (_onCommit == UNCOMMITTED)
+                    _onCommit = onCommit;
+                else
                 {
-                    notifyCommit(l);
-                    notifyCommit(onCommit);
-                };
-            });
+                    BiConsumer<Request, Response> previous = _onCommit;
+                    _onCommit = (request, response) ->
+                    {
+                        notifyCommit(previous);
+                        notifyCommit(onCommit);
+                    };
+                }
+            }
         }
 
         @Override
         public boolean isCommitted()
         {
-            return _onCommit.get() == COMMITTED;
+            try (AutoLock ignored = _lock.lock())
+            {
+                return _onCommit == COMMITTED;
+            }
         }
 
         @Override
         public void reset()
         {
-            if (isCommitted())
-                throw new IllegalStateException("Committed");
-            _headers.clear(); // TODO re-add or don't delete default fields
-            HttpFields trailers = _trailers.get();
-            if (trailers instanceof HttpFields.Mutable)
-                ((HttpFields.Mutable)trailers).clear();
-            _status = 0;
+            try (AutoLock ignored = _lock.lock())
+            {
+                if (_onCommit == COMMITTED)
+                    throw new IllegalStateException("Committed");
+
+                _headers.clear(); // TODO re-add or don't delete default fields
+                if (_trailers != null)
+                    _trailers.clear();
+                _status = 0;
+            }
         }
 
         private MetaData.Response commitResponse(boolean last)
         {
-            BiConsumer<Request, Response> committed = _onCommit.getAndSet(COMMITTED);
-            if (committed == COMMITTED)
-                return null;
+            BiConsumer<Request, Response> committed;
+            Supplier<HttpFields> trailers;
+            try (AutoLock ignored = _lock.lock())
+            {
+                if (_onCommit == COMMITTED)
+                    return null;
+
+                committed = _onCommit;
+                _onCommit = COMMITTED;
+
+                if (_status == 0)
+                    _status = 200;
+
+                _contentLength = _headers.getLongField(HttpHeader.CONTENT_LENGTH);
+                if (last && _contentLength < 0L)
+                {
+                    _contentLength = _written;
+                    _headers.putLongField(HttpHeader.CONTENT_LENGTH, _contentLength);
+                }
+
+                if (_configuration.getSendDateHeader() && !_headers.contains(HttpHeader.DATE))
+                    _headers.put(getServer().getDateField());
+
+                _headers.toReadOnly();
+
+                trailers = _trailers == null ? null : _response::takeTrailers;
+            }
 
             if (committed != UNCOMMITTED)
                 notifyCommit(committed);
-
-            _contentLength = _headers.getLongField(HttpHeader.CONTENT_LENGTH);
-            if (last && _contentLength < 0L)
-            {
-                _contentLength = _written;
-                _headers.putLongField(HttpHeader.CONTENT_LENGTH, _contentLength);
-            }
-
-            if (_status == 0)
-                _status = 200;
 
             return new MetaData.Response(
                 _request._metaData.getHttpVersion(),
                 _status,
                 null,
-                _headers.toReadOnly(),
+                _headers,
                 -1,
-                _response::takeTrailers);
+                trailers);
         }
 
         private void notifyCommit(BiConsumer<Request, Response> onCommit)

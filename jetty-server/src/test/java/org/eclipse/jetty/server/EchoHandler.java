@@ -34,7 +34,8 @@ public class EchoHandler extends Handler.Abstract
         long contentLength = request.getHeaders().getLongField(HttpHeader.CONTENT_LENGTH);
         if (contentLength >= 0)
             response.setContentLength(contentLength);
-
+        if (request.getHeaders().contains(HttpHeader.TRAILER))
+            response.getTrailers();
         new Echo(request, response).iterate();
         return true;
     }

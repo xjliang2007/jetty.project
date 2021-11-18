@@ -213,9 +213,9 @@ public class HttpConnectionTest
             "12345";
 
         String response = connector.getResponse(request);
-        assertThat(response, containsString(" 200 OK"));
+        assertThat(response, containsString(" 400 Bad Request"));
         assertThat(response, containsString("Connection: close"));
-        assertThat(response, containsString("Early EOF"));
+        assertThat(response, containsString("reason: early EOF"));
     }
 
     public static Stream<int[]> contentLengths()
@@ -545,7 +545,6 @@ public class HttpConnectionTest
 
         int offset = 0;
         offset = checkContains(response, offset, "HTTP/1.1 200");
-        checkNotContained(response, offset, "Content-Length");
 
         response = connector.getResponse("GET /R1?empty=true HTTP/1.1\r\n" +
             "Host: localhost\r\n" +
@@ -555,7 +554,6 @@ public class HttpConnectionTest
         offset = 0;
         offset = checkContains(response, offset, "HTTP/1.1 200");
         checkContains(response, offset, "Connection: close");
-        checkNotContained(response, offset, "Content-Length");
     }
 
     @Test
@@ -868,70 +866,6 @@ public class HttpConnectionTest
     }
 
     @Test
-    public void testCharset() throws Exception
-    {
-        String response = null;
-        try
-        {
-            int offset = 0;
-            response = connector.getResponse("GET /R1 HTTP/1.1\r\n" +
-                "Host: localhost\r\n" +
-                "Transfer-Encoding: chunked\r\n" +
-                "Content-Type: text/plain; charset=utf-8\r\n" +
-                "Connection: close\r\n" +
-                "\r\n" +
-                "5;\r\n" +
-                "12345\r\n" +
-                "0;\r\n" +
-                "\r\n");
-            offset = checkContains(response, offset, "HTTP/1.1 200");
-            offset = checkContains(response, offset, "/R1");
-            offset = checkContains(response, offset, "encoding=UTF-8");
-            checkContains(response, offset, "12345");
-
-            offset = 0;
-            response = connector.getResponse("GET /R1 HTTP/1.1\r\n" +
-                "Host: localhost\r\n" +
-                "Transfer-Encoding: chunked\r\n" +
-                "Content-Type: text/plain; charset =  iso-8859-1 ; other=value\r\n" +
-                "Connection: close\r\n" +
-                "\r\n" +
-                "5;\r\n" +
-                "12345\r\n" +
-                "0;\r\n" +
-                "\r\n");
-            offset = checkContains(response, offset, "HTTP/1.1 200");
-            offset = checkContains(response, offset, "encoding=iso-8859-1");
-            offset = checkContains(response, offset, "/R1");
-            checkContains(response, offset, "12345");
-
-            offset = 0;
-            LOG.info("Expecting java.io.UnsupportedEncodingException");
-            response = connector.getResponse("GET /R1 HTTP/1.1\r\n" +
-                "Host: localhost\r\n" +
-                "Transfer-Encoding: chunked\r\n" +
-                "Content-Type: text/plain; charset=unknown\r\n" +
-                "Connection: close\r\n" +
-                "\r\n" +
-                "5;\r\n" +
-                "12345\r\n" +
-                "0;\r\n" +
-                "\r\n");
-
-            offset = checkContains(response, offset, "HTTP/1.1 200");
-            offset = checkContains(response, offset, "encoding=unknown");
-            offset = checkContains(response, offset, "/R1");
-            checkContains(response, offset, "UnsupportedEncodingException");
-        }
-        catch (Exception e)
-        {
-            if (response != null)
-                System.err.println(response);
-            throw e;
-        }
-    }
-
-    @Test
     public void testUnconsumed() throws Exception
     {
         int offset = 0;
@@ -1022,7 +956,6 @@ public class HttpConnectionTest
         offset = checkContains(response, offset, "HTTP/1.1 499");
         offset = checkContains(response, offset, "HTTP/1.1 200");
         offset = checkContains(response, offset, "/R2");
-        offset = checkContains(response, offset, "encoding=UTF-8");
         checkContains(response, offset, "abcdefghij");
     }
 
