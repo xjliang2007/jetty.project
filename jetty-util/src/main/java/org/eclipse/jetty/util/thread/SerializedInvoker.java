@@ -64,6 +64,20 @@ public class SerializedInvoker
         return runnable;
     }
 
+    public void execute(Runnable task)
+    {
+        Runnable todo = invoke(task);
+        if (todo != null)
+            _executor.execute(todo);
+    }
+
+    public void execute(Runnable... tasks)
+    {
+        Runnable todo = invoke(tasks);
+        if (todo != null)
+            _executor.execute(todo);
+    }
+
     protected void onError(Runnable task, Throwable t)
     {
         try

@@ -32,8 +32,10 @@ import org.eclipse.jetty.http.HttpVersion;
 import org.eclipse.jetty.http.MetaData;
 import org.eclipse.jetty.http.MimeTypes;
 import org.eclipse.jetty.io.Connection;
+import org.eclipse.jetty.logging.StacklessLogging;
 import org.eclipse.jetty.util.BufferUtil;
 import org.eclipse.jetty.util.Callback;
+import org.eclipse.jetty.util.FuturePromise;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -47,6 +49,9 @@ import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
 import static org.hamcrest.Matchers.sameInstance;
 import static org.hamcrest.Matchers.startsWith;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class ChannelTest
 {
@@ -326,7 +331,11 @@ public class ChannelTest
         HttpFields fields = HttpFields.build().add(HttpHeader.HOST, "localhost").asImmutable();
         MetaData.Request request = new MetaData.Request("GET", HttpURI.from("http://localhost/"), HttpVersion.HTTP_1_1, fields, 0);
         Runnable task = channel.onRequest(request);
-        task.run();
+
+        try (StacklessLogging ignored = new StacklessLogging(Handler.class))
+        {
+            task.run();
+        }
 
         assertThat(stream.isComplete(), is(true));
         assertThat(stream.getFailure(), nullValue());
@@ -363,8 +372,11 @@ public class ChannelTest
         HttpFields fields = HttpFields.build().add(HttpHeader.HOST, "localhost").asImmutable();
         MetaData.Request request = new MetaData.Request("GET", HttpURI.from("http://localhost/"), HttpVersion.HTTP_1_1, fields, 0);
         Runnable task = channel.onRequest(request);
-        task.run();
 
+        try (StacklessLogging ignored = new StacklessLogging(Handler.class))
+        {
+            task.run();
+        }
         assertThat(stream.isComplete(), is(true));
         assertThat(stream.getFailure(), notNullValue());
         assertThat(stream.getResponse(), notNullValue());
@@ -820,9 +832,9 @@ public class ChannelTest
         Iterator<String> timeline = history.iterator();
 
         // Read of the first part that has already arrived
-        assertThat(timeline.next(), allOf(startsWith("readContent: "),containsString("<<<ECHO >>>")));
+        assertThat(timeline.next(), allOf(startsWith("readContent: "), containsString("<<<ECHO >>>")));
         // send the first part with a commit
-        assertThat(timeline.next(), allOf(startsWith("send 200 l=false"),containsString("<<<ECHO >>>")));
+        assertThat(timeline.next(), allOf(startsWith("send 200 l=false"), containsString("<<<ECHO >>>")));
         // no more content available
         assertThat(timeline.next(), allOf(startsWith("readContent: null")));
         // demand content
@@ -984,4 +996,129 @@ public class ChannelTest
         assertThat(BufferUtil.toString(stream.getResponseContent()), equalTo("contentSize=" + (chunks * data.remaining())));
     }
 
+    @Test
+    public void testOnError() throws Exception
+    {
+        AtomicReference<Request> handling = new AtomicReference<>();
+        AtomicReference<Throwable> error = new AtomicReference<>();
+        Handler handler = new Handler.Abstract()
+        {
+            @Override
+            public boolean handle(Request request, Response response)
+            {
+                handling.set(request);
+                request.ifError(t -> {});
+                request.ifError(error::set);
+                return true;
+            }
+        };
+        server.setHandler(handler);
+        server.start();
+
+        ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
+        Channel channel = new Channel(server, connectionMetaData, new HttpConfiguration());
+        MockStream stream = new MockStream(channel);
+
+        HttpFields fields = HttpFields.build().add(HttpHeader.HOST, "localhost").asImmutable();
+        MetaData.Request request = new MetaData.Request("GET", HttpURI.from("http://localhost/"), HttpVersion.HTTP_1_1, fields, 0);
+        Runnable task = channel.onRequest(request);
+        task.run();
+
+        assertThat(stream.isComplete(), is(false));
+        assertThat(stream.getFailure(), nullValue());
+        assertThat(stream.getResponse(), nullValue());
+
+        // failure happens
+        IOException failure = new IOException("Testing");
+        Runnable todo = channel.onError(failure);
+        assertThat(todo, notNullValue());
+
+        // onError not yet called
+        assertThat(error.get(), nullValue());
+
+        // request still handling
+        assertFalse(handling.get().isComplete());
+        assertFalse(stream.isComplete());
+
+        // but now we cannot read, demand nor write
+        Content read = handling.get().readContent();
+        assertTrue(read.isSpecial());
+        assertTrue(read.isLast());
+        assertInstanceOf(Content.Error.class, read);
+        assertThat(((Content.Error)read).getCause(), sameInstance(failure));
+
+        CountDownLatch demand = new CountDownLatch(1);
+        // Callback serialized until after onError task
+        handling.get().demandContent(demand::countDown);
+
+        FuturePromise<Throwable> callback = new FuturePromise<>();
+        // Callback serialized until after onError task
+        handling.get().getChannel().getResponse().write(false, Callback.from(() -> {}, callback::succeeded));
+
+        // process error callback
+        todo.run();
+
+        // onError was called
+        assertThat(error.get(), sameInstance(failure));
+        // demand callback was called
+        assertTrue(demand.await(5, TimeUnit.SECONDS));
+        // write callback was failed
+        assertThat(callback.get(5, TimeUnit.SECONDS), sameInstance(failure));
+
+        // request completed handling
+        assertTrue(handling.get().isComplete());
+        assertTrue(stream.isComplete());
+    }
+
+    @Test
+    public void testOnCommitAndComplete() throws Exception
+    {
+        CountDownLatch committing = new CountDownLatch(1);
+        CountDownLatch completed = new CountDownLatch(1);
+        EchoHandler echoHandler = new EchoHandler()
+        {
+            @Override
+            public boolean handle(Request request, Response response)
+            {
+                response.whenCommitting((req, res) ->
+                {
+                    committing.countDown();
+                });
+                request.whenComplete(Callback.from(completed::countDown));
+                return super.handle(request, response);
+            }
+        };
+        server.setHandler(echoHandler);
+        server.start();
+
+        ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
+        Channel channel = new Channel(server, connectionMetaData, new HttpConfiguration());
+        MockStream stream = new MockStream(channel, false);
+
+        HttpFields fields = HttpFields.build()
+            .add(HttpHeader.HOST, "localhost")
+            .add(HttpHeader.CONTENT_TYPE, MimeTypes.Type.TEXT_PLAIN_8859_1.asString())
+            .asImmutable();
+        MetaData.Request request = new MetaData.Request("POST", HttpURI.from("http://localhost/"), HttpVersion.HTTP_1_1, fields, -1);
+
+        Runnable todo = channel.onRequest(request);
+        todo.run();
+        assertFalse(stream.isComplete());
+        assertTrue(stream.isDemanding());
+        assertThat(committing.getCount(), is(1L));
+        assertThat(completed.getCount(), is(1L));
+
+        stream.addContent(BufferUtil.toBuffer("hello "), false).run();
+
+        assertFalse(stream.isComplete());
+        assertTrue(stream.isDemanding());
+        assertTrue(committing.await(5, TimeUnit.SECONDS));
+        assertThat(completed.getCount(), is(1L));
+        stream.addContent(BufferUtil.toBuffer("world!"), true).run();
+
+        assertTrue(committing.await(5, TimeUnit.SECONDS));
+        assertTrue(completed.await(5, TimeUnit.SECONDS));
+        assertTrue(stream.isComplete());
+        assertFalse(stream.isDemanding());
+    }
 }

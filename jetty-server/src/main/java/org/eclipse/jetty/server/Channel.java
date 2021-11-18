@@ -59,6 +59,7 @@ public class Channel extends AttributesMap
     private final SerializedInvoker _serializedInvocation;
     private Stream _stream;
     private int _requests;
+    private Content.Error _error;
     private BiConsumer<Request, Response> _onCommit = UNCOMMITTED;
     private Consumer<Throwable> _onConnectionComplete;
     private ChannelRequest _request;
@@ -192,11 +193,16 @@ public class Channel extends AttributesMap
             if (LOG.isDebugEnabled())
                 LOG.debug("onError {} {}", this, x);
 
-            ChannelRequest request = _request;
-            if (request == null)
+            if (_request == null || _stream == null)
                 return null;
 
-            // TODO should we set up an Content.Error for the next readContent, or rely on Stream to do that?
+            ChannelRequest request = _request;
+
+            // Remember the error
+            if (_error == null)
+                _error = new Content.Error(x);
+            else if (_error.getCause() != x)
+                _error.getCause().addSuppressed(x);
 
             // TODO if we are currently demanding, do we include a call to onDataAvailable in the return?
             Runnable onDataAvailable = null;
@@ -404,19 +410,30 @@ public class Channel extends AttributesMap
         @Override
         public Content readContent()
         {
+            try (AutoLock ignored = _lock.lock())
+            {
+                if (_error != null)
+                    return _error;
+            }
             return getStream().readContent();
         }
 
         @Override
         public void demandContent(Runnable onContentAvailable)
         {
+            boolean error;
             try (AutoLock ignored = _lock.lock())
             {
                 if (_onContent != null && _onContent != onContentAvailable)
                     throw new IllegalArgumentException();
                 _onContent = onContentAvailable;
+                error = _error != null;
             }
-            getStream().demandContent();
+
+            if (error)
+                _serializedInvocation.execute(Channel.this.onContentAvailable());
+            else
+                getStream().demandContent();
         }
 
         @Override
@@ -424,6 +441,12 @@ public class Channel extends AttributesMap
         {
             try (AutoLock ignored = _lock.lock())
             {
+                if (_error != null)
+                {
+                    _serializedInvocation.execute(() -> onError.accept(_error.getCause()));
+                    return;
+                }
+
                 if (_onError == null)
                     _onError = onError;
                 else
@@ -452,13 +475,27 @@ public class Channel extends AttributesMap
                 @Override
                 public void succeeded()
                 {
-                    onComplete.succeeded();
+                    try
+                    {
+                        onComplete.succeeded();
+                    }
+                    finally
+                    {
+                        super.succeeded();
+                    }
                 }
 
                 @Override
                 public void failed(Throwable x)
                 {
-                    onComplete.failed(x);
+                    try
+                    {
+                        onComplete.failed(x);
+                    }
+                    finally
+                    {
+                        super.failed(x);
+                    }
                 }
             });
         }
@@ -592,6 +629,17 @@ public class Channel extends AttributesMap
         @Override
         public void write(boolean last, Callback callback, ByteBuffer... content)
         {
+            Content.Error error;
+            try (AutoLock ignored = _lock.lock())
+            {
+                error = _error;
+            }
+            if (error != null)
+            {
+                _serializedInvocation.execute(() -> callback.failed(error.getCause()));
+                return;
+            }
+
             for (ByteBuffer b : content)
                 _written += b.remaining();
             if (_contentLength >= 0)
