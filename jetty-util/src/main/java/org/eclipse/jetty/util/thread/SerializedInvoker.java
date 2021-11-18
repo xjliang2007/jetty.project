@@ -13,118 +13,157 @@
 
 package org.eclipse.jetty.util.thread;
 
-import java.util.ArrayDeque;
-import java.util.Deque;
 import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 
-import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class SerializedInvoker implements Runnable, Invocable
+/**
+ * Ensures serial invocation of submitted tasks.
+ * <p>
+ * This class was inspired by the public domain class
+ * <a href="https://github.com/jroper/reactive-streams-servlet/blob/master/reactive-streams-servlet/src/main/java/org/reactivestreams/servlet/NonBlockingMutexExecutor.java">NonBlockingMutexExecutor</a>
+ * </p>
+ */
+public class SerializedInvoker
 {
-    private static final Logger LOG = LoggerFactory.getLogger(SerializedInvoker.class);
-
+    private final AtomicReference<Link> _tail = new AtomicReference<>();
     private final Executor _executor;
-    private final AutoLock _lock = new AutoLock();
-    private final Deque<Runnable> _queue = new ArrayDeque<>();
-    private Invocable.InvocationType _runAs;
-    private Invocable.InvocationType _runningAs;
 
     public SerializedInvoker(Executor executor)
     {
         _executor = executor;
     }
 
-    public Runnable invoke(Runnable... runnable)
+    public Runnable invoke(Runnable task)
     {
-        try (AutoLock ignored = _lock.lock())
-        {
-            // Add Runnables to the queue and combine invocation types
-            for (Runnable r : runnable)
-            {
-                if (r != null)
-                {
-                    _runAs = Invocable.combine(_runAs, Invocable.getInvocationType(r));
-                    _queue.add(r);
-                }
-            }
-
-            // return null if this invoker is already running
-            if (_runningAs != null)
-                return null;
-
-            // return this invoker to run as the current invocation type
-            _runningAs = _runAs;
-            return this;
-        }
+        Link link = new Link(task);
+        Link lastButOne = _tail.getAndSet(link);
+        if (lastButOne == null)
+            return link;
+        lastButOne._next.lazySet(link);
+        return null;
     }
 
-    @Override
-    public void run()
+    public Runnable invoke(Runnable... task)
     {
-        // We are running in blocking mode is BLOCKING or it is EITHER and we were not invoked non-blocking
-        boolean runningBlocking = _runningAs == InvocationType.BLOCKING || _runningAs == InvocationType.EITHER && !Invocable.isNonBlockingInvocation();
-
-        // loop through all the queued tasks
-        while (true)
+        Runnable runnable = null;
+        for (Runnable run : task)
         {
-            Runnable task;
-            try (AutoLock ignored = _lock.lock())
+            if (run != null)
             {
-                // Get the next task off the queue
-                task = _queue.pollFirst();
-                if (task == null)
-                {
-                    // if no more tasks, then end invocation
-                    _runningAs = null;
-                    return;
-                }
+                if (runnable == null)
+                    runnable = invoke(run);
+                else
+                    invoke(run);
             }
+        }
+        return runnable;
+    }
 
-            // invoke the task
+    protected void onError(Runnable task, Throwable t)
+    {
+        try
+        {
+            if (task instanceof ErrorHandlingTask)
+                ((ErrorHandlingTask)task).accept(t);
+        }
+        catch (Throwable x)
+        {
+            if (x != t)
+                t.addSuppressed(x);
+        }
+        LoggerFactory.getLogger(task.getClass()).error("Error", t);
+    }
+
+    private void invoke(Link link, boolean runningBlocking)
+    {
+        while (link != null)
+        {
             try
             {
                 // if we are running in blocking mode
                 if (runningBlocking)
                 {
                     // we can just call the task directly
-                    task.run();
+                    link._task.run();
                 }
                 else
                 {
                     // we are running in non blocking mode
-                    switch (Invocable.getInvocationType(task))
+                    switch (Invocable.getInvocationType(link._task))
                     {
                         case BLOCKING:
-                            // The task is blocking, so put it back on the queue and execute this invoker
-                            _queue.addFirst(task);
-                            _runningAs = InvocationType.BLOCKING;
-                            _executor.execute(this);
+                            // The task is blocking, so execute it
+                            _executor.execute(link);
                             return;
 
                         case NON_BLOCKING:
                             // the task is also non_blocking, so just run it
-                            task.run();
+                            link._task.run();
                             break;
 
                         case EITHER:
                             // the task is either, so invoke it in non blocking mode
-                            Invocable.invokeNonBlocking(task);
+                            Invocable.invokeNonBlocking(link._task);
                             break;
                     }
                 }
             }
             catch (Throwable t)
             {
-                LOG.warn("Invocation failed {} {}", task, t);
+                onError(link._task, t);
+            }
+
+            // Are we the current the last Link?
+            if (_tail.compareAndSet(link, null))
+                link = null;
+            else
+            {
+                // not the last task, so its next link will eventually be set
+                Link next = link._next.get();
+                while (next == null)
+                {
+                    Thread.onSpinWait();
+                    next = link._next.get();
+                }
+                link = next;
             }
         }
     }
 
-    @Override
-    public InvocationType getInvocationType()
+    private class Link implements Runnable, Invocable
     {
-        InvocationType type = _runningAs;
-        return type == null ? InvocationType.BLOCKING : type;
+        private final Runnable _task;
+        private final AtomicReference<Link> _next = new AtomicReference<>();
+
+        public Link(Runnable task)
+        {
+            _task = task;
+        }
+
+        @Override
+        public void run()
+        {
+            // We are running in blocking mode if BLOCKING or it is EITHER and we were not invoked non-blocking
+            Invocable.InvocationType runningAs = Invocable.getInvocationType(_task);
+            boolean runningBlocking = runningAs == Invocable.InvocationType.BLOCKING || runningAs == Invocable.InvocationType.EITHER && !Invocable.isNonBlockingInvocation();
+            invoke(this, runningBlocking);
+        }
+
+        @Override
+        public InvocationType getInvocationType()
+        {
+            return Invocable.getInvocationType(_task);
+        }
     }
+
+    /**
+     * Error handling task
+     * <p>If a submitted task implements this interface, it will be passed
+     * any exceptions thrown when running the task.</p>
+     */
+    public interface ErrorHandlingTask extends Runnable, Consumer<Throwable>
+    {}
 }
