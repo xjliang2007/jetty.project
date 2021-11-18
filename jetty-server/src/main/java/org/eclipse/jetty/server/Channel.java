@@ -59,6 +59,7 @@ public class Channel extends AttributesMap
     private final SerializedInvoker _serializedInvocation;
     private Stream _stream;
     private int _requests;
+    private BiConsumer<Request, Response> _onCommit = UNCOMMITTED;
     private Consumer<Throwable> _onConnectionComplete;
     private ChannelRequest _request;
     private ChannelResponse _response;
@@ -78,6 +79,7 @@ public class Channel extends AttributesMap
             if (_stream != null)
                 throw new IllegalStateException("Stream pending");
             _stream = stream;
+            _onCommit = UNCOMMITTED;
         }
     }
 
@@ -85,7 +87,7 @@ public class Channel extends AttributesMap
     {
         try (AutoLock ignored = _lock.lock())
         {
-            return _request.stream();
+            return _request.getStream();
         }
     }
 
@@ -341,7 +343,7 @@ public class Channel extends AttributesMap
             }
         }
 
-        Stream stream()
+        Stream getStream()
         {
             try (AutoLock ignored = _lock.lock())
             {
@@ -402,7 +404,7 @@ public class Channel extends AttributesMap
         @Override
         public Content readContent()
         {
-            return stream().readContent();
+            return getStream().readContent();
         }
 
         @Override
@@ -414,7 +416,7 @@ public class Channel extends AttributesMap
                     throw new IllegalArgumentException();
                 _onContent = onContentAvailable;
             }
-            stream().demandContent();
+            getStream().demandContent();
         }
 
         @Override
@@ -508,7 +510,7 @@ public class Channel extends AttributesMap
         @Override
         public InvocationType getInvocationType()
         {
-            return stream().getInvocationType();
+            return getStream().getInvocationType();
         }
     }
 
@@ -517,13 +519,8 @@ public class Channel extends AttributesMap
 
     private class ChannelResponse implements Response
     {
-        // TODO are all these atomics worth while?
-        //      Multiple atomics are rarely race-free (eg _onCommit COMMITTED, but _headers not yet Immutable)
-        //      Would we be better to synchronise??
-        //      Or maybe just not be thread safe?
         private final ChannelRequest _request = Channel.this._request;
         private final ResponseHttpFields _headers = new ResponseHttpFields();
-        private BiConsumer<Request, Response> _onCommit = UNCOMMITTED;
         private ResponseHttpFields _trailers;
         private long _written;
         private long _contentLength = -1L;
@@ -618,7 +615,7 @@ public class Channel extends AttributesMap
                 return;
             }
 
-            _request.stream().send(commit, last, callback, content);
+            _request.getStream().send(commit, last, callback, content);
         }
 
         private void fail(Callback callback, String reason, Object... args)
@@ -633,7 +630,7 @@ public class Channel extends AttributesMap
         @Override
         public void push(MetaData.Request request)
         {
-            _request.stream().push(request);
+            _request.getStream().push(request);
         }
 
         @Override

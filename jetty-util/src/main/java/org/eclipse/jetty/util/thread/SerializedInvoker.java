@@ -38,6 +38,8 @@ public class SerializedInvoker
 
     public Runnable invoke(Runnable task)
     {
+        if (task == null)
+            return null;
         Link link = new Link(task);
         Link lastButOne = _tail.getAndSet(link);
         if (lastButOne == null)
