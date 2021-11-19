@@ -102,7 +102,6 @@ public class SerializedInvokerTest
         assertTrue(task4.hasRun());
     }
 
-
     @Test
     public void testRecursive() throws Exception
     {
@@ -188,6 +187,18 @@ public class SerializedInvokerTest
         assertTrue(task4.hasRun());
     }
 
+    @Test
+    public void testSelfInvocation() throws Exception
+    {
+        Task task1 = new Task();
+        Task task2 = new Task();
+        Runnable todo = _invoker.invoke(() -> _invoker.execute(_invoker.invoke(task1)), task2);
+
+        todo.run();
+
+        assertTrue(task1.hasRun());
+        assertTrue(task2.hasRun());
+    }
 
     public static class Task implements Runnable, Invocable
     {
