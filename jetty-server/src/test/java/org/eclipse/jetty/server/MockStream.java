@@ -27,8 +27,8 @@ import org.eclipse.jetty.util.Callback;
 
 class MockStream implements Stream
 {
-    private final static Throwable SUCCEEDED = new Throwable();
-    private final static Content DEMAND = new Content.Abstract(true, false) {};
+    private static final Throwable SUCCEEDED = new Throwable();
+    private static final Content DEMAND = new Content.Abstract(true, false) {};
     private final long nano = System.nanoTime();
     private final AtomicReference<Content> _content = new AtomicReference<>();
     private final AtomicReference<Throwable> _complete = new AtomicReference<>();

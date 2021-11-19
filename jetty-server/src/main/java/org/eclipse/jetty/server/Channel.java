@@ -198,46 +198,52 @@ public class Channel extends AttributesMap
 
             ChannelRequest request = _request;
 
-            // Remember the error
+            // Remember the error and arrange for any subsequent reads, demands or writes to fail with this error
             if (_error == null)
                 _error = new Content.Error(x);
             else if (_error.getCause() != x)
+            {
                 _error.getCause().addSuppressed(x);
+                return null; // TODO or should we process again?
+            }
 
             // TODO if we are currently demanding, do we include a call to onDataAvailable in the return?
-            Runnable onDataAvailable = null;
+            //      Currently as implemented we only call onDataAvailable for demand calls that come after the error
+            //      and we assume the Stream will call onDataAvailable for any errors for existing demand?
+            //      It would be moderately safe to force the call to ODA as any subsequent call would be a noop.
+            //      But then we should probably do the same for write callback below, which is a bit more complicated.
+            // Runnable invokeOnDataAvailable = _request._onContent;
+            // _request._onContent = null;
+            Runnable invokeOnDataAvailable = null;
 
             // TODO if a write is in progress, do we break the linkage and fail the callback
-            Runnable writeFailure = null;
+            Runnable invokeWriteFailure = null;
 
-            // TODO should we arrange for any subsequent writes to fail with this error or rely on the request.failed below?
+            // Invoke any onError listener(s);
             Consumer<Throwable> onError = request._onError;
+            request._onError = null;
             Runnable invokeOnError = onError == null ? null : () -> onError.accept(x);
 
-            // TODO we we always ultimately fail the request?
-            return _serializedInvocation.invoke(onDataAvailable, writeFailure, invokeOnError, () -> request.failed(x));
+            // Serialize all the error actions.
+            // TODO Currently we always fail the request. Should we? or perhaps only if there is no onError listener?
+            return _serializedInvocation.invoke(invokeOnDataAvailable, invokeWriteFailure, invokeOnError, () -> request.failed(x));
         }
     }
 
     public Runnable onConnectionClose(Throwable failed)
     {
-        Stream stream;
+        boolean hasStream;
         Consumer<Throwable> onConnectionClose;
         try (AutoLock ignored = _lock.lock())
         {
-            stream = _stream;
-            _stream = null;
+            hasStream = _stream != null;
             onConnectionClose = _onConnectionComplete;
             _onConnectionComplete = null;
         }
 
-        if (onConnectionClose == null)
-            return stream == null ? null : _serializedInvocation.invoke(() -> stream.failed(failed));
-
-        if (stream == null)
-            return _serializedInvocation.invoke(() -> onConnectionClose.accept(failed));
-
-        return _serializedInvocation.invoke(() -> stream.failed(failed), () -> onConnectionClose.accept(failed));
+        return _serializedInvocation.invoke(
+            hasStream ? () -> _serializedInvocation.execute(() -> onError(failed)) : null,
+            onConnectionClose == null ? null : () -> onConnectionClose.accept(failed));
     }
 
     public void whenStreamEvent(Function<Stream, Stream.Wrapper> onStreamEvent)

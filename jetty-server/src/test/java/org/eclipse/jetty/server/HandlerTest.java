@@ -13,7 +13,6 @@
 
 package org.eclipse.jetty.server;
 
-
 import org.junit.jupiter.api.Test;
 
 import static org.hamcrest.MatcherAssert.assertThat;

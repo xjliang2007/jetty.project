@@ -236,6 +236,7 @@ public class HttpConnectionTest
             new int[] {8, -1, 8}
         );
     }
+
     /**
      * More then 1 Content-Length is a bad requests per HTTP rfcs.
      */
@@ -1301,7 +1302,7 @@ public class HttpConnectionTest
                             request.demandContent(blocker::countDown);
                             blocker.await();
                         }
-                        catch(InterruptedException e)
+                        catch (InterruptedException e)
                         {
                             // ignored
                         }

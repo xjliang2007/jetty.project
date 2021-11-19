@@ -53,6 +53,7 @@ public interface Handler extends LifeCycle, Destroyable
 {
     Logger LOG = LoggerFactory.getLogger(Handler.class);
 
+    // TODO should we throw Exception? We have to catch Throwable anyway, so may make handlers a little simpler?
     boolean handle(Request request, Response response);
 
     @ManagedAttribute(value = "the jetty server for this handler", readonly = true)

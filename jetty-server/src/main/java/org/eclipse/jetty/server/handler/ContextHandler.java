@@ -28,6 +28,7 @@ import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.server.Response;
 import org.eclipse.jetty.util.Attributes;
 import org.eclipse.jetty.util.annotation.ManagedAttribute;
+import org.eclipse.jetty.util.thread.Invocable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -336,12 +337,6 @@ public class ContextHandler extends Handler.Wrapper implements Attributes
         _persistentAttributes.clearAttributes();
     }
 
-    // TODO move to o.e.j.u.thread ?
-    public interface Task
-    {
-        void run() throws Exception;
-    }
-
     public class Context extends Attributes.Layer
     {
         public Context()
@@ -370,7 +365,7 @@ public class ContextHandler extends Handler.Wrapper implements Attributes
             return _resourceBase;
         }
 
-        public void call(Task task) throws Exception
+        public void call(Invocable.Task task) throws Exception
         {
             ClassLoader loader = getClassLoader();
             if (loader == null)

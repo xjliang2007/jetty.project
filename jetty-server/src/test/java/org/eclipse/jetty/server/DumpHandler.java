@@ -111,7 +111,7 @@ public class DumpHandler extends Handler.Abstract
                         return true;
                     }
 
-                    int l = Math.min(buffer.length,Math.min(len, content.remaining()));
+                    int l = Math.min(buffer.length, Math.min(len, content.remaining()));
                     content.fill(buffer, 0, l);
                     read.append(buffer, 0, l);
                     len -= l;
@@ -204,7 +204,7 @@ public class DumpHandler extends Handler.Abstract
                     }
 
                     int l = Math.min(buffer.length, content.remaining());
-                    content.fill(buffer, 0 , l);
+                    content.fill(buffer, 0, l);
                     read.append(buffer, 0, l);
 
                     if (content.isEmpty())
@@ -249,7 +249,7 @@ public class DumpHandler extends Handler.Abstract
 
             request.succeeded();
         }
-        catch(Exception x)
+        catch (Exception x)
         {
             request.failed(x);
         }
