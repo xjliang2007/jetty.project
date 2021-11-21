@@ -53,12 +53,6 @@ public class DumpHandler extends Handler.Blocking
     }
 
     @Override
-    protected boolean accept(Request request)
-    {
-        return isStarted();
-    }
-
-    @Override
     protected void blocking(Request request, Response response) throws Exception
     {
         HttpURI httpURI = request.getHttpURI();

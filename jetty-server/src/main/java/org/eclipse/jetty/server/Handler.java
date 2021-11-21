@@ -343,7 +343,10 @@ public interface Handler extends LifeCycle, Destroyable
 
     abstract class Blocking extends Abstract
     {
-        protected abstract boolean accept(Request request);
+        protected boolean accept(Request request)
+        {
+            return isStarted();
+        }
 
         @Override
         public boolean handle(Request request, Response response) throws Exception

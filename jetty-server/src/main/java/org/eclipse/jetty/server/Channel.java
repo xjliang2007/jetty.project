@@ -624,6 +624,7 @@ public class Channel extends AttributesMap
                 if (reason == null)
                     reason = HttpStatus.getMessage(status);
 
+                response.setStatus(status);
                 ByteBuffer content = BufferUtil.EMPTY_BUFFER;
                 if (!HttpStatus.hasNoBody(status))
                 {
