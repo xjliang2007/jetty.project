@@ -17,6 +17,7 @@ import org.eclipse.jetty.http.HttpHeader;
 import org.eclipse.jetty.server.Handler;
 import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.server.Response;
+import org.eclipse.jetty.util.thread.Invocable;
 
 public class HandleOnContentHandler extends Handler.Wrapper
 {
@@ -27,11 +28,32 @@ public class HandleOnContentHandler extends Handler.Wrapper
         if (request.getContentLength() <= 0 && !request.getHeaders().contains(HttpHeader.CONTENT_TYPE))
             return super.handle(request, response);
 
-        request.demandContent(() ->
-        {
-            if (!super.handle(request, response))
-                request.failed(new IllegalStateException());
-        });
+        request.demandContent(new OnContentRunner(request, response));
         return true;
+    }
+
+    private class OnContentRunner implements Runnable, Invocable
+    {
+        private final Request _request;
+        private final Response _response;
+
+        public OnContentRunner(Request request, Response response)
+        {
+            _request = request;
+            _response = response;
+        }
+
+        @Override
+        public void run()
+        {
+            if (!HandleOnContentHandler.super.handle(_request, _response))
+                _request.failed(new IllegalStateException());
+        }
+
+        @Override
+        public InvocationType getInvocationType()
+        {
+            return InvocationType.EITHER;
+        }
     }
 }

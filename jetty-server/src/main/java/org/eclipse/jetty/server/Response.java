@@ -14,7 +14,6 @@
 package org.eclipse.jetty.server;
 
 import java.nio.ByteBuffer;
-import java.util.function.BiConsumer;
 
 import org.eclipse.jetty.http.HttpFields;
 import org.eclipse.jetty.http.HttpHeader;
@@ -42,7 +41,7 @@ public interface Response
 
     void push(MetaData.Request request);
 
-    void whenCommitting(BiConsumer<Request, Response> onCommit);
+    void whenCommitting(Runnable onCommit);
 
     boolean isCommitted();
 
@@ -134,7 +133,7 @@ public interface Response
         }
 
         @Override
-        public void whenCommitting(BiConsumer<Request, Response> onCommit)
+        public void whenCommitting(Runnable onCommit)
         {
             _wrapped.whenCommitting(onCommit);
         }

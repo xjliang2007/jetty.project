@@ -15,6 +15,8 @@ package org.eclipse.jetty.server;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
 import org.eclipse.jetty.http.HttpHeader;
@@ -32,6 +34,7 @@ class MockStream implements Stream
     private final long nano = System.nanoTime();
     private final AtomicReference<Content> _content = new AtomicReference<>();
     private final AtomicReference<Throwable> _complete = new AtomicReference<>();
+    private final CountDownLatch _completed = new CountDownLatch(1);
     private final ByteBufferAccumulator _accumulator = new ByteBufferAccumulator();
     private final AtomicReference<ByteBuffer> _out = new AtomicReference<>();
     private final Channel _channel;
@@ -60,6 +63,11 @@ class MockStream implements Stream
         return addContent((last && BufferUtil.isEmpty(buffer)) ? Content.EOF : Content.from(buffer, last));
     }
 
+    public Runnable addContent(String content, boolean last)
+    {
+        return addContent(BufferUtil.toBuffer(content), last);
+    }
+
     public Runnable addContent(Content content)
     {
         content = _content.getAndSet(content);
@@ -78,6 +86,16 @@ class MockStream implements Stream
     public ByteBuffer getResponseContent()
     {
         return _out.get();
+    }
+
+    public String getResponseContentAsString()
+    {
+        ByteBuffer buffer = _out.get();
+        if (buffer == null)
+            return null;
+        if (buffer.remaining() == 0)
+            return "";
+        return BufferUtil.toString(buffer);
     }
 
     public Throwable getFailure()
@@ -166,21 +184,37 @@ class MockStream implements Stream
     @Override
     public boolean isComplete()
     {
-        return _complete.get() != null;
+        return _completed.getCount() == 0;
+    }
+
+    public boolean waitForComplete(long timeout, TimeUnit units)
+    {
+        try
+        {
+            return _completed.await(timeout, units);
+        }
+        catch (InterruptedException e)
+        {
+            return false;
+        }
     }
 
     @Override
     public void succeeded()
     {
-        _complete.compareAndSet(null, SUCCEEDED);
+        if (_complete.compareAndSet(null, SUCCEEDED))
+            _completed.countDown();
     }
 
     @Override
     public void failed(Throwable x)
     {
-        if (_channel.getMetaConnection() instanceof MockConnectionMetaData)
-            ((MockConnectionMetaData)_channel.getMetaConnection()).notPersistent();
-        _complete.compareAndSet(null, x == null ? new Throwable() : x);
+        if (_complete.compareAndSet(null, x == null ? new Throwable() : x))
+        {
+            if (_channel.getMetaConnection() instanceof MockConnectionMetaData)
+                ((MockConnectionMetaData)_channel.getMetaConnection()).notPersistent();
+            _completed.countDown();
+        }
     }
 
     @Override

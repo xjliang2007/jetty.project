@@ -24,6 +24,7 @@ import org.eclipse.jetty.util.annotation.ManagedOperation;
 import org.eclipse.jetty.util.component.ContainerLifeCycle;
 import org.eclipse.jetty.util.component.Destroyable;
 import org.eclipse.jetty.util.component.LifeCycle;
+import org.eclipse.jetty.util.thread.Invocable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -339,5 +340,24 @@ public interface Handler extends LifeCycle, Destroyable
             if (list.remove(handler))
                 setHandlers(list);
         }
+    }
+
+    abstract class Blocking extends Abstract
+    {
+        protected abstract boolean accept(Request request);
+
+        @Override
+        public boolean handle(Request request, Response response)
+        {
+            if (!accept(request))
+                return false;
+            if (Invocable.isNonBlockingInvocation())
+                request.execute(() -> blocking(request, response));
+            else
+                blocking(request, response);
+            return true;
+        }
+
+        protected abstract void blocking(Request request, Response response);
     }
 }

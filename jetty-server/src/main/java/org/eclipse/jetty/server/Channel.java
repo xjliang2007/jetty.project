@@ -15,7 +15,6 @@ package org.eclipse.jetty.server;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
@@ -53,6 +52,7 @@ public class Channel extends AttributesMap
     public static final String UPGRADE_CONNECTION_ATTRIBUTE = Channel.class.getName() + ".UPGRADE";
 
     private final AutoLock _lock = new AutoLock();
+    private final Runnable _handle = new RunHandle();
     private final Server _server;
     private final ConnectionMetaData _connectionMetaData;
     private final HttpConfiguration _configuration;
@@ -60,7 +60,7 @@ public class Channel extends AttributesMap
     private Stream _stream;
     private int _requests;
     private Content.Error _error;
-    private BiConsumer<Request, Response> _onCommit = UNCOMMITTED;
+    private Runnable _onCommit = UNCOMMITTED;
     private Consumer<Throwable> _onConnectionComplete;
     private ChannelRequest _request;
     private ChannelResponse _response;
@@ -112,6 +112,14 @@ public class Channel extends AttributesMap
         return _connectionMetaData.getConnector();
     }
 
+    /**
+     * Start request handling by returning a Runnable that will call {@link Server#handle(Request, Response)}.
+     * @param request The request metadata to handle.
+     * @return A Runnable that will call {@link Server#handle(Request, Response)}.  This Runnable may block if
+     * {@link Invocable#isNonBlockingInvocation()} returns false in the calling context.  Unlike all other Runnables
+     * returned by {@link Channel} methods, this runnable is not mutually excluded or serialized against the other
+     * Runnables.
+     */
     public Runnable onRequest(MetaData.Request request)
     {
         try (AutoLock ignored = _lock.lock())
@@ -134,11 +142,8 @@ public class Channel extends AttributesMap
                     throw new BadMessageException(badMessage);
             }
 
-            // TODO invocation type of this Runnable
-            //      currently the only way to do this would be to insist that Handler.handle never blocked and
-            //      returned a Runnable instead of a boolean.
-            //      If it is blocking, then it can't be mutually excluded from other callbacks
-            return this::handle;
+            // This is deliberately not serialized as to allow a handler to block.
+            return _handle;
         }
     }
 
@@ -297,12 +302,6 @@ public class Channel extends AttributesMap
         return HostPort.normalizeHost(addr);
     }
 
-    private void handle()
-    {
-        if (!_server.handle(_request, _response))
-            throw new IllegalStateException();
-    }
-
     private void notifyConnectionClose(Consumer<Throwable> onConnectionComplete, Throwable failed)
     {
         if (onConnectionComplete != null)
@@ -315,6 +314,22 @@ public class Channel extends AttributesMap
             {
                 t.printStackTrace();
             }
+        }
+    }
+
+    private class RunHandle implements Runnable, Invocable
+    {
+        @Override
+        public void run()
+        {
+            if (!_server.handle(_request, _response))
+                throw new IllegalStateException();
+        }
+
+        @Override
+        public InvocationType getInvocationType()
+        {
+            return InvocationType.EITHER;
         }
     }
 
@@ -364,7 +379,13 @@ public class Channel extends AttributesMap
                 return _stream;
             }
         }
-        
+
+        @Override
+        public void execute(Runnable task)
+        {
+            _server.getThreadPool().execute(task);
+        }
+
         @Override
         public String getId()
         {
@@ -557,8 +578,8 @@ public class Channel extends AttributesMap
         }
     }
 
-    private static final BiConsumer<Request, Response> UNCOMMITTED = (req, res) -> {};
-    private static final BiConsumer<Request, Response> COMMITTED = (req, res) -> {};
+    private static final Runnable UNCOMMITTED = () -> {};
+    private static final Runnable COMMITTED = () -> {};
 
     private class ChannelResponse implements Response
     {
@@ -688,7 +709,7 @@ public class Channel extends AttributesMap
         }
 
         @Override
-        public void whenCommitting(BiConsumer<Request, Response> onCommit)
+        public void whenCommitting(Runnable onCommit)
         {
             try (AutoLock ignored = _lock.lock())
             {
@@ -699,11 +720,12 @@ public class Channel extends AttributesMap
                     _onCommit = onCommit;
                 else
                 {
-                    BiConsumer<Request, Response> previous = _onCommit;
-                    _onCommit = (request, response) ->
+
+                    Runnable previous = _onCommit;
+                    _onCommit = () ->
                     {
-                        notifyCommit(previous);
-                        notifyCommit(onCommit);
+                        notifyRunnable(previous);
+                        notifyRunnable(onCommit);
                     };
                 }
             }
@@ -735,7 +757,7 @@ public class Channel extends AttributesMap
 
         private MetaData.Response commitResponse(boolean last)
         {
-            BiConsumer<Request, Response> committed;
+            Runnable committed;
             Supplier<HttpFields> trailers;
             try (AutoLock ignored = _lock.lock())
             {
@@ -764,7 +786,7 @@ public class Channel extends AttributesMap
             }
 
             if (committed != UNCOMMITTED)
-                notifyCommit(committed);
+                notifyRunnable(committed);
 
             return new MetaData.Response(
                 _request._metaData.getHttpVersion(),
@@ -775,13 +797,13 @@ public class Channel extends AttributesMap
                 trailers);
         }
 
-        private void notifyCommit(BiConsumer<Request, Response> onCommit)
+        private void notifyRunnable(Runnable runnable)
         {
-            if (onCommit != null)
+            if (runnable != null)
             {
                 try
                 {
-                    onCommit.accept(_request, _response);
+                    runnable.run();
                 }
                 catch (Throwable t)
                 {

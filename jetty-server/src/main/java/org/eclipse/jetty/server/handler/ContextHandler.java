@@ -13,10 +13,12 @@
 
 package org.eclipse.jetty.server.handler;
 
+import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 import org.eclipse.jetty.http.HttpField;
@@ -27,6 +29,7 @@ import org.eclipse.jetty.server.Handler;
 import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.server.Response;
 import org.eclipse.jetty.util.Attributes;
+import org.eclipse.jetty.util.Callback;
 import org.eclipse.jetty.util.annotation.ManagedAttribute;
 import org.eclipse.jetty.util.thread.Invocable;
 import org.slf4j.Logger;
@@ -293,18 +296,19 @@ public class ContextHandler extends Handler.Wrapper implements Attributes
 
         // TODO check availability and maybe return a 503
 
-        ScopedRequest scoped = wrap(request, response, pathInContext);
+        ContextRequest scoped = wrap(request, response, pathInContext);
         if (scoped == null)
             return false; // TODO 404? 500? Error dispatch ???
 
-        // TODO make the lambda part of the scope request to save allocation
-        _context.run(() -> next.handle(scoped, response));
+        // TODO make the lambda part of the scope request to save allocation?
+        // TODO wrap response to add scope on write callback
+        _context.run(() -> next.handle(scoped, new ScopedResponse(response)));
         return true;
     }
 
-    protected ScopedRequest wrap(Request request, Response response, String pathInContext)
+    protected ContextRequest wrap(Request request, Response response, String pathInContext)
     {
-        return new ScopedRequest(_context, request, pathInContext);
+        return new ContextRequest(_context, request, pathInContext);
     }
 
     @Override
@@ -367,23 +371,52 @@ public class ContextHandler extends Handler.Wrapper implements Attributes
 
         public void call(Invocable.Task task) throws Exception
         {
-            ClassLoader loader = getClassLoader();
-            if (loader == null)
+            Context lastContext = __context.get();
+            if (lastContext == this)
                 task.run();
             else
             {
+                ClassLoader loader = getClassLoader();
                 ClassLoader lastLoader = Thread.currentThread().getContextClassLoader();
-                Context lastContext = __context.get();
                 try
                 {
                     __context.set(this);
-                    Thread.currentThread().setContextClassLoader(loader);
+                    if (loader != null)
+                        Thread.currentThread().setContextClassLoader(loader);
+
                     task.run();
                 }
                 finally
                 {
-                    Thread.currentThread().setContextClassLoader(lastLoader);
                     __context.set(lastContext);
+                    if (loader != null)
+                        Thread.currentThread().setContextClassLoader(lastLoader);
+                }
+            }
+        }
+
+        public void accept(Consumer<Throwable> consumer, Throwable t)
+        {
+            Context lastContext = __context.get();
+            if (lastContext == this)
+                consumer.accept(t);
+            else
+            {
+                ClassLoader loader = getClassLoader();
+                ClassLoader lastLoader = Thread.currentThread().getContextClassLoader();
+                try
+                {
+                    __context.set(this);
+                    if (loader != null)
+                        Thread.currentThread().setContextClassLoader(loader);
+
+                    consumer.accept(t);
+                }
+                finally
+                {
+                    __context.set(lastContext);
+                    if (loader != null)
+                        Thread.currentThread().setContextClassLoader(lastLoader);
                 }
             }
         }
@@ -397,7 +430,42 @@ public class ContextHandler extends Handler.Wrapper implements Attributes
             catch (Exception e)
             {
                 LOG.warn("Failed to run in {}", _displayName, e);
+                // TODO should we let this propagate up as a RuntimeException?
             }
+        }
+    }
+
+    private class ScopedResponse extends Response.Wrapper
+    {
+        public ScopedResponse(Response response)
+        {
+            super(response);
+        }
+
+        @Override
+        public void write(boolean last, Callback callback, ByteBuffer... content)
+        {
+            Callback contextCallback = new Callback()
+            {
+                @Override
+                public void succeeded()
+                {
+                    _context.run(callback::succeeded);
+                }
+
+                @Override
+                public void failed(Throwable t)
+                {
+                    _context.accept(callback::failed, t);
+                }
+            };
+            super.write(last, contextCallback, content);
+        }
+
+        @Override
+        public void whenCommitting(Runnable onCommit)
+        {
+            super.whenCommitting(() -> _context.run(onCommit));
         }
     }
 }

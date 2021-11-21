@@ -15,6 +15,7 @@ package org.eclipse.jetty.server;
 
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
+import java.util.concurrent.Executor;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
@@ -23,7 +24,7 @@ import org.eclipse.jetty.http.HttpURI;
 import org.eclipse.jetty.util.Attributes;
 import org.eclipse.jetty.util.Callback;
 
-public interface Request extends Attributes, Callback
+public interface Request extends Attributes, Callback, Executor
 {
     String getId();
 
@@ -137,6 +138,12 @@ public interface Request extends Attributes, Callback
             super(wrapped);
             this._wrapped = wrapped;
             wrapped.setWrapper(this);
+        }
+
+        @Override
+        public void execute(Runnable task)
+        {
+            _wrapped.execute(task);
         }
 
         @Override

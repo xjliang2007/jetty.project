@@ -36,12 +36,12 @@ import org.slf4j.LoggerFactory;
  * Dumps GET and POST requests.
  * Useful for testing and debugging.
  */
-public class DumpHandler extends Handler.Abstract
+public class DumpHandler extends Handler.Blocking
 {
     private static final Logger LOG = LoggerFactory.getLogger(DumpHandler.class);
 
     private final SharedBlockingCallback _blocker = new SharedBlockingCallback(); 
-    String _label = "Dump HttpHandler";
+    String _label = "Dump Handler";
 
     public DumpHandler()
     {
@@ -51,17 +51,19 @@ public class DumpHandler extends Handler.Abstract
     {
         this._label = label;
     }
-    
+
     @Override
-    public boolean handle(Request request, Response response)
+    protected boolean accept(Request request)
+    {
+        return isStarted();
+    }
+
+    @Override
+    protected void blocking(Request request, Response response)
     {
         try
         {
-            if (!isStarted())
-                return false;
-
             HttpURI httpURI = request.getHttpURI();
-            System.err.println(httpURI);
 
             MultiMap<String> params = UrlEncoded.decodeQuery(httpURI.getQuery());
 
@@ -78,7 +80,7 @@ public class DumpHandler extends Handler.Abstract
             {
                 response.setStatus(200);
                 request.succeeded();
-                return true;
+                return;
             }
 
             Utf8StringBuilder read = null;
@@ -108,7 +110,7 @@ public class DumpHandler extends Handler.Abstract
                     if (content instanceof Content.Error)
                     {
                         request.failed(((Content.Error)content).getCause());
-                        return true;
+                        return;
                     }
 
                     int l = Math.min(buffer.length, Math.min(len, content.remaining()));
@@ -137,7 +139,7 @@ public class DumpHandler extends Handler.Abstract
             {
                 response.setStatus(Integer.parseInt(params.getValue("error")));
                 request.succeeded();
-                return true;
+                return;
             }
 
             response.setContentType(MimeTypes.Type.TEXT_HTML.asString());
@@ -200,7 +202,7 @@ public class DumpHandler extends Handler.Abstract
                     if (content instanceof Content.Error)
                     {
                         request.failed(((Content.Error)content).getCause());
-                        return true;
+                        return;
                     }
 
                     int l = Math.min(buffer.length, content.remaining());
@@ -253,6 +255,6 @@ public class DumpHandler extends Handler.Abstract
         {
             request.failed(x);
         }
-        return true;
+        return;
     }
 }

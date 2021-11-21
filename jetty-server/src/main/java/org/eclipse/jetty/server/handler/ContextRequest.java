@@ -13,18 +13,64 @@
 
 package org.eclipse.jetty.server.handler;
 
-import org.eclipse.jetty.server.Request;
+import java.util.function.Consumer;
 
-public class ScopedRequest extends Request.Wrapper
+import org.eclipse.jetty.server.Request;
+import org.eclipse.jetty.util.Callback;
+
+public class ContextRequest extends Request.Wrapper
 {
     private final String _pathInContext;
     private final ContextHandler.Context _context;
 
-    protected ScopedRequest(ContextHandler.Context context, Request wrapped, String pathInContext)
+    protected ContextRequest(ContextHandler.Context context, Request wrapped, String pathInContext)
     {
         super(wrapped);
         _pathInContext = pathInContext;
         this._context = context;
+    }
+
+    @Override
+    public void execute(Runnable task)
+    {
+        super.execute(() -> _context.run(task));
+    }
+
+    @Override
+    public void demandContent(Runnable onContentAvailable)
+    {
+        super.demandContent(() -> _context.run(onContentAvailable));
+    }
+
+    @Override
+    public void ifError(Consumer<Throwable> onError)
+    {
+        super.ifError(t -> _context.accept(onError, t));
+    }
+
+    @Override
+    public void whenComplete(Callback onComplete)
+    {
+        super.whenComplete(new Callback()
+        {
+            @Override
+            public void succeeded()
+            {
+                _context.run(onComplete::succeeded);
+            }
+
+            @Override
+            public void failed(Throwable t)
+            {
+                _context.accept(onComplete::failed, t);
+            }
+        });
+    }
+
+    @Override
+    public InvocationType getInvocationType()
+    {
+        return super.getInvocationType();
     }
 
     public ContextHandler.Context getContext()

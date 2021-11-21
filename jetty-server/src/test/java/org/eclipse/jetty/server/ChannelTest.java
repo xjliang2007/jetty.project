@@ -36,6 +36,7 @@ import org.eclipse.jetty.logging.StacklessLogging;
 import org.eclipse.jetty.util.BufferUtil;
 import org.eclipse.jetty.util.Callback;
 import org.eclipse.jetty.util.FuturePromise;
+import org.eclipse.jetty.util.thread.Invocable;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -51,34 +52,35 @@ import static org.hamcrest.Matchers.sameInstance;
 import static org.hamcrest.Matchers.startsWith;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class ChannelTest
 {
-    Server server;
+    Server _server;
 
     @BeforeEach
     public void beforeEach() throws Exception
     {
-        server = new Server();
+        _server = new Server();
     }
 
     @AfterEach
     public void afterEach() throws Exception
     {
-        if (server != null)
-            server.stop();
+        if (_server != null)
+            _server.stop();
     }
 
     @Test
     public void testSimpleGET() throws Exception
     {
         HelloHandler helloHandler = new HelloHandler();
-        server.setHandler(helloHandler);
-        server.start();
+        _server.setHandler(helloHandler);
+        _server.start();
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
-        Channel channel = new Channel(server, connectionMetaData, new HttpConfiguration());
+        Channel channel = new Channel(_server, connectionMetaData, new HttpConfiguration());
         MockStream stream = new MockStream(channel);
 
         HttpFields fields = HttpFields.build().add(HttpHeader.HOST, "localhost").asImmutable();
@@ -98,11 +100,11 @@ public class ChannelTest
     public void testAsyncGET() throws Exception
     {
         HelloHandler helloHandler = new HelloHandler();
-        server.setHandler(helloHandler);
-        server.start();
+        _server.setHandler(helloHandler);
+        _server.start();
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
-        Channel channel = new Channel(server, connectionMetaData, new HttpConfiguration());
+        Channel channel = new Channel(_server, connectionMetaData, new HttpConfiguration());
         AtomicReference<Callback> sendCB = new AtomicReference<>();
         MockStream stream = new MockStream(channel)
         {
@@ -132,14 +134,49 @@ public class ChannelTest
     }
 
     @Test
+    public void testBlockingPOST() throws Exception
+    {
+        DumpHandler echoHandler = new DumpHandler();
+        _server.setHandler(echoHandler);
+        _server.start();
+
+        ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
+        Channel channel = new Channel(_server, connectionMetaData, new HttpConfiguration());
+        MockStream stream = new MockStream(channel, false);
+
+        HttpFields fields = HttpFields.build()
+            .add(HttpHeader.HOST, "localhost")
+            .asImmutable();
+        MetaData.Request request = new MetaData.Request("POST", HttpURI.from("http://localhost/?read=10"), HttpVersion.HTTP_1_1, fields, 0);
+
+        Runnable todo = channel.onRequest(request);
+        Invocable.invokeNonBlocking(todo); // handling will block for content, but not in this call
+
+        assertNull(stream.addContent("01234567890", true));
+
+        stream.waitForComplete(10, TimeUnit.SECONDS);
+
+        assertThat(stream.isComplete(), is(true));
+        assertThat(stream.getFailure(), nullValue());
+        assertThat(stream.getResponse(), notNullValue());
+        assertThat(stream.getResponse().getStatus(), equalTo(200));
+        assertThat(stream.getResponse().getFields().get(HttpHeader.CONTENT_TYPE), containsString("text/html"));
+
+        String content = stream.getResponseContentAsString();
+        assertThat(content, containsString("<h1>Dump Handler</h1>"));
+        assertThat(content, containsString("path=/"));
+        assertThat(content, containsString("<pre>0123456789</pre>"));
+    }
+
+    @Test
     public void testEchoPOST() throws Exception
     {
         EchoHandler echoHandler = new EchoHandler();
-        server.setHandler(echoHandler);
-        server.start();
+        _server.setHandler(echoHandler);
+        _server.start();
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
-        Channel channel = new Channel(server, connectionMetaData, new HttpConfiguration());
+        Channel channel = new Channel(_server, connectionMetaData, new HttpConfiguration());
         MockStream stream = new MockStream(channel, false);
 
         String message = "ECHO Echo echo";
@@ -152,8 +189,8 @@ public class ChannelTest
         stream.addContent(body, true);
         MetaData.Request request = new MetaData.Request("POST", HttpURI.from("http://localhost/"), HttpVersion.HTTP_1_1, fields, 0);
 
-        Runnable task = channel.onRequest(request);
-        task.run();
+        Runnable todo = channel.onRequest(request);
+        todo.run();
 
         assertThat(stream.isComplete(), is(true));
         assertThat(stream.getFailure(), nullValue());
@@ -167,11 +204,11 @@ public class ChannelTest
     public void testMultiEchoPOST() throws Exception
     {
         EchoHandler echoHandler = new EchoHandler();
-        server.setHandler(echoHandler);
-        server.start();
+        _server.setHandler(echoHandler);
+        _server.start();
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
-        Channel channel = new Channel(server, connectionMetaData, new HttpConfiguration());
+        Channel channel = new Channel(_server, connectionMetaData, new HttpConfiguration());
         String[] parts = new String[] {"ECHO ", "Echo ", "echo"};
         MockStream stream = new MockStream(channel, false)
         {
@@ -209,11 +246,11 @@ public class ChannelTest
     public void testAsyncEchoPOST() throws Exception
     {
         EchoHandler echoHandler = new EchoHandler();
-        server.setHandler(echoHandler);
-        server.start();
+        _server.setHandler(echoHandler);
+        _server.start();
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
-        Channel channel = new Channel(server, connectionMetaData, new HttpConfiguration());
+        Channel channel = new Channel(_server, connectionMetaData, new HttpConfiguration());
         String[] parts = new String[] {"ECHO ", "Echo ", "echo"};
         AtomicReference<Callback> sendCB = new AtomicReference<>();
         MockStream stream = new MockStream(channel, false)
@@ -290,11 +327,11 @@ public class ChannelTest
                 return false;
             }
         };
-        server.setHandler(handler);
-        server.start();
+        _server.setHandler(handler);
+        _server.start();
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
-        Channel channel = new Channel(server, connectionMetaData, new HttpConfiguration());
+        Channel channel = new Channel(_server, connectionMetaData, new HttpConfiguration());
         MockStream stream = new MockStream(channel);
 
         HttpFields fields = HttpFields.build().add(HttpHeader.HOST, "localhost").asImmutable();
@@ -321,11 +358,11 @@ public class ChannelTest
                 throw new UnsupportedOperationException("testing");
             }
         };
-        server.setHandler(handler);
-        server.start();
+        _server.setHandler(handler);
+        _server.start();
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
-        Channel channel = new Channel(server, connectionMetaData, new HttpConfiguration());
+        Channel channel = new Channel(_server, connectionMetaData, new HttpConfiguration());
         MockStream stream = new MockStream(channel);
 
         HttpFields fields = HttpFields.build().add(HttpHeader.HOST, "localhost").asImmutable();
@@ -362,11 +399,11 @@ public class ChannelTest
                 return true;
             }
         };
-        server.setHandler(handler);
-        server.start();
+        _server.setHandler(handler);
+        _server.start();
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
-        Channel channel = new Channel(server, connectionMetaData, new HttpConfiguration());
+        Channel channel = new Channel(_server, connectionMetaData, new HttpConfiguration());
         MockStream stream = new MockStream(channel);
 
         HttpFields fields = HttpFields.build().add(HttpHeader.HOST, "localhost").asImmutable();
@@ -395,11 +432,11 @@ public class ChannelTest
                 return true;
             }
         };
-        server.setHandler(handler);
-        server.start();
+        _server.setHandler(handler);
+        _server.start();
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
-        Channel channel = new Channel(server, connectionMetaData, new HttpConfiguration());
+        Channel channel = new Channel(_server, connectionMetaData, new HttpConfiguration());
         MockStream stream = new MockStream(channel);
 
         HttpFields fields = HttpFields.build().add(HttpHeader.HOST, "localhost").asImmutable();
@@ -428,11 +465,11 @@ public class ChannelTest
                 return true;
             }
         };
-        server.setHandler(handler);
-        server.start();
+        _server.setHandler(handler);
+        _server.start();
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
-        Channel channel = new Channel(server, connectionMetaData, new HttpConfiguration());
+        Channel channel = new Channel(_server, connectionMetaData, new HttpConfiguration());
         MockStream stream = new MockStream(channel);
 
         HttpFields fields = HttpFields.build().add(HttpHeader.HOST, "localhost").asImmutable();
@@ -459,11 +496,11 @@ public class ChannelTest
                 return true;
             }
         };
-        server.setHandler(handler);
-        server.start();
+        _server.setHandler(handler);
+        _server.start();
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
-        Channel channel = new Channel(server, connectionMetaData, new HttpConfiguration());
+        Channel channel = new Channel(_server, connectionMetaData, new HttpConfiguration());
         MockStream stream = new MockStream(channel);
 
         HttpFields fields = HttpFields.build().add(HttpHeader.HOST, "localhost").asImmutable();
@@ -490,11 +527,11 @@ public class ChannelTest
                 return true;
             }
         };
-        server.setHandler(handler);
-        server.start();
+        _server.setHandler(handler);
+        _server.start();
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
-        Channel channel = new Channel(server, connectionMetaData, new HttpConfiguration());
+        Channel channel = new Channel(_server, connectionMetaData, new HttpConfiguration());
         MockStream stream = new MockStream(channel);
 
         HttpFields fields = HttpFields.build().add(HttpHeader.HOST, "localhost").asImmutable();
@@ -521,11 +558,11 @@ public class ChannelTest
                 return true;
             }
         };
-        server.setHandler(handler);
-        server.start();
+        _server.setHandler(handler);
+        _server.start();
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
-        Channel channel = new Channel(server, connectionMetaData, new HttpConfiguration());
+        Channel channel = new Channel(_server, connectionMetaData, new HttpConfiguration());
         MockStream stream = new MockStream(channel);
 
         HttpFields fields = HttpFields.build().add(HttpHeader.HOST, "localhost").asImmutable();
@@ -543,11 +580,11 @@ public class ChannelTest
     public void testUnconsumedContentAvailable() throws Exception
     {
         HelloHandler helloHandler = new HelloHandler();
-        server.setHandler(helloHandler);
-        server.start();
+        _server.setHandler(helloHandler);
+        _server.start();
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
-        Channel channel = new Channel(server, connectionMetaData, new HttpConfiguration());
+        Channel channel = new Channel(_server, connectionMetaData, new HttpConfiguration());
         MockStream stream = new MockStream(channel, false);
 
         String message = "ECHO Echo echo";
@@ -589,11 +626,11 @@ public class ChannelTest
                 return true;
             }
         };
-        server.setHandler(handler);
-        server.start();
+        _server.setHandler(handler);
+        _server.start();
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
-        Channel channel = new Channel(server, connectionMetaData, new HttpConfiguration());
+        Channel channel = new Channel(_server, connectionMetaData, new HttpConfiguration());
         MockStream stream = new MockStream(channel, false);
 
         HttpFields fields = HttpFields.build()
@@ -633,11 +670,11 @@ public class ChannelTest
                 return true;
             }
         };
-        server.setHandler(handler);
-        server.start();
+        _server.setHandler(handler);
+        _server.start();
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
-        Channel channel = new Channel(server, connectionMetaData, new HttpConfiguration());
+        Channel channel = new Channel(_server, connectionMetaData, new HttpConfiguration());
         MockStream stream = new MockStream(channel, false);
 
         HttpFields fields = HttpFields.build()
@@ -664,11 +701,11 @@ public class ChannelTest
     public void testPersistent() throws Exception
     {
         EchoHandler echoHandler = new EchoHandler();
-        server.setHandler(echoHandler);
-        server.start();
+        _server.setHandler(echoHandler);
+        _server.start();
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
-        Channel channel = new Channel(server, connectionMetaData, new HttpConfiguration());
+        Channel channel = new Channel(_server, connectionMetaData, new HttpConfiguration());
         MockStream stream = new MockStream(channel, false);
 
         String message = "ECHO Echo echo";
@@ -711,11 +748,11 @@ public class ChannelTest
     public void testWhenStreamEvent() throws Exception
     {
         EchoHandler echoHandler = new EchoHandler();
-        server.setHandler(echoHandler);
-        server.start();
+        _server.setHandler(echoHandler);
+        _server.start();
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
-        Channel channel = new Channel(server, connectionMetaData, new HttpConfiguration());
+        Channel channel = new Channel(_server, connectionMetaData, new HttpConfiguration());
         AtomicReference<Callback> sendCB = new AtomicReference<>();
         MockStream stream = new MockStream(channel, false)
         {
@@ -865,11 +902,11 @@ public class ChannelTest
     public void testTrailers() throws Exception
     {
         EchoHandler echoHandler = new EchoHandler();
-        server.setHandler(echoHandler);
-        server.start();
+        _server.setHandler(echoHandler);
+        _server.start();
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
-        Channel channel = new Channel(server, connectionMetaData, new HttpConfiguration());
+        Channel channel = new Channel(_server, connectionMetaData, new HttpConfiguration());
         String[] parts = new String[] {"ECHO ", "Echo ", "echo"};
         HttpFields trailers = HttpFields.build().add("Some", "value").asImmutable();
         MockStream stream = new MockStream(channel, false)
@@ -917,7 +954,7 @@ public class ChannelTest
     @Test
     public void testDemandRecursion() throws Exception
     {
-        server.setHandler(new Handler.Abstract()
+        _server.setHandler(new Handler.Abstract()
         {
             @Override
             public boolean handle(Request request, Response response)
@@ -954,10 +991,10 @@ public class ChannelTest
                 return true;
             }
         });
-        server.start();
+        _server.start();
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
-        Channel channel = new Channel(server, connectionMetaData, new HttpConfiguration());
+        Channel channel = new Channel(_server, connectionMetaData, new HttpConfiguration());
         ByteBuffer data = BufferUtil.toBuffer("data");
         final int chunks = 100000;
         AtomicInteger count = new AtomicInteger(chunks);
@@ -1012,11 +1049,11 @@ public class ChannelTest
                 return true;
             }
         };
-        server.setHandler(handler);
-        server.start();
+        _server.setHandler(handler);
+        _server.start();
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
-        Channel channel = new Channel(server, connectionMetaData, new HttpConfiguration());
+        Channel channel = new Channel(_server, connectionMetaData, new HttpConfiguration());
         MockStream stream = new MockStream(channel);
 
         HttpFields fields = HttpFields.build().add(HttpHeader.HOST, "localhost").asImmutable();
@@ -1080,19 +1117,16 @@ public class ChannelTest
             @Override
             public boolean handle(Request request, Response response)
             {
-                response.whenCommitting((req, res) ->
-                {
-                    committing.countDown();
-                });
+                response.whenCommitting(committing::countDown);
                 request.whenComplete(Callback.from(completed::countDown));
                 return super.handle(request, response);
             }
         };
-        server.setHandler(echoHandler);
-        server.start();
+        _server.setHandler(echoHandler);
+        _server.start();
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
-        Channel channel = new Channel(server, connectionMetaData, new HttpConfiguration());
+        Channel channel = new Channel(_server, connectionMetaData, new HttpConfiguration());
         MockStream stream = new MockStream(channel, false);
 
         HttpFields fields = HttpFields.build()
