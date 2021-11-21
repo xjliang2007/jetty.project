@@ -36,7 +36,7 @@ import org.eclipse.jetty.util.Callback;
 import org.eclipse.jetty.util.HostPort;
 import org.eclipse.jetty.util.thread.AutoLock;
 import org.eclipse.jetty.util.thread.Invocable;
-import org.eclipse.jetty.util.thread.SerializedInvoker;
+import org.eclipse.jetty.util.thread.SerializedExecutor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -60,7 +60,7 @@ public class Channel extends AttributesMap
     private final Server _server;
     private final ConnectionMetaData _connectionMetaData;
     private final HttpConfiguration _configuration;
-    private final SerializedInvoker _serializedInvocation;
+    private final SerializedExecutor _serializedInvocation;
     private Stream _stream;
     private int _requests;
     private Content.Error _error;
@@ -75,7 +75,7 @@ public class Channel extends AttributesMap
         _server = server;
         _connectionMetaData = connectionMetaData;
         _configuration = configuration;
-        _serializedInvocation = new SerializedInvoker(_server.getThreadPool());
+        _serializedInvocation = new SerializedExecutor(_server.getThreadPool());
     }
 
     public void setStream(Stream stream)
@@ -206,17 +206,18 @@ public class Channel extends AttributesMap
             if (LOG.isDebugEnabled())
                 LOG.debug("onError {} {}", this, x);
 
+            // If the channel doesn't have a stream, then the error is ignored
             if (_stream == null)
                 return null;
 
+            // If the channel doesn't have a request, then the error must have occurred during parsing the request header
             if (_request == null)
             {
+                // Make a temp request for logging and producing 400 response.
                 _requests++;
                 _request = new ChannelRequest(null);
                 _response = new ChannelResponse();
             }
-
-            ChannelRequest request = _request;
 
             // Remember the error and arrange for any subsequent reads, demands or writes to fail with this error
             if (_error == null)
@@ -245,6 +246,7 @@ public class Channel extends AttributesMap
             }
 
             // Invoke any onError listener(s);
+            ChannelRequest request = _request;
             Consumer<Throwable> onError = request._onError;
             request._onError = null;
             Runnable invokeOnError = onError == null ? null : () -> onError.accept(x);
@@ -565,6 +567,11 @@ public class Channel extends AttributesMap
                 _stream = null;
                 _request = null;
                 _response = null;
+
+                // TODO what if
+                boolean hasError = _error != null;
+                boolean pendingRead = _onContentAvailable != null;
+                boolean pendingWrite = _onWriteComplete != null;
             }
 
             if (stream == null)
@@ -600,6 +607,12 @@ public class Channel extends AttributesMap
                 _stream = null;
                 _request = null;
                 _response = null;
+
+                // TODO what if
+                boolean hasError = _error != null;
+                boolean pendingRead = _onContentAvailable != null;
+                boolean pendingWrite = _onWriteComplete != null;
+                boolean onError = _onError != null;
             }
 
             if (LOG.isDebugEnabled())
@@ -607,11 +620,12 @@ public class Channel extends AttributesMap
             if (stream == null)
                 return;
 
+            // committed, but the stream is still able to send a response
             if (committed)
                 stream.failed(x);
             else
             {
-                // Try to write a response
+                // Try to write an error response
                 response.reset();
                 int status = 500;
                 String reason = x.toString();
