@@ -146,7 +146,7 @@ public class ContextHandlerTest
         Handler handler = new Handler.Abstract()
         {
             @Override
-            public boolean handle(Request request, Response response)
+            public boolean handle(Request request, Response response) throws Exception
             {
                 assertInContext(request);
                 response.setStatus(200);
@@ -178,7 +178,7 @@ public class ContextHandlerTest
         Handler handler = new Handler.Abstract()
         {
             @Override
-            public boolean handle(Request request, Response response)
+            public boolean handle(Request request, Response response) throws Exception
             {
                 request.whenComplete(Callback.from(() -> assertInContext(request)));
                 response.whenCommitting(() -> assertInContext(request));
@@ -242,6 +242,8 @@ public class ContextHandlerTest
     @Test
     public void testBlockingInContext() throws Exception
     {
+        CountDownLatch blocking = new CountDownLatch(1);
+
         Handler handler = new Handler.Blocking()
         {
             @Override
@@ -251,7 +253,7 @@ public class ContextHandlerTest
             }
 
             @Override
-            public void blocking(Request request, Response response)
+            public void blocking(Request request, Response response) throws Exception
             {
                 request.whenComplete(Callback.from(() -> assertInContext(request)));
                 response.whenCommitting(() -> assertInContext(request));
@@ -262,21 +264,16 @@ public class ContextHandlerTest
                     assertInContext(request);
                     latch.countDown();
                 });
-                try
-                {
-                    assertTrue(latch.await(10, TimeUnit.SECONDS));
-                    Content content = request.readContent();
-                    assertNotNull(content);
-                    assertTrue(content.hasRemaining());
-                    assertTrue(content.isLast());
-                    content.release();
-                    response.setStatus(200);
-                    request.succeeded();
-                }
-                catch (InterruptedException e)
-                {
-                    request.failed(e);
-                }
+
+                blocking.countDown();
+                assertTrue(latch.await(10, TimeUnit.SECONDS));
+                Content content = request.readContent();
+                assertNotNull(content);
+                assertTrue(content.hasRemaining());
+                assertTrue(content.isLast());
+                content.release();
+                response.setStatus(200);
+                request.succeeded();
             }
         };
         _contextHandler.setHandler(handler);
@@ -284,19 +281,17 @@ public class ContextHandlerTest
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
         Channel channel = new Channel(_server, connectionMetaData, new HttpConfiguration());
-        AtomicReference<Callback> sendCB = new AtomicReference<>();
         MockStream stream = new MockStream(channel, false);
 
         HttpFields fields = HttpFields.build().add(HttpHeader.HOST, "localhost").asImmutable();
         MetaData.Request request = new MetaData.Request("POST", HttpURI.from("http://localhost/ctx/path"), HttpVersion.HTTP_1_1, fields, 0);
         Runnable todo = channel.onRequest(request);
         Invocable.invokeNonBlocking(todo);
+        assertTrue(blocking.await(5, TimeUnit.SECONDS));
 
-        todo = stream.addContent(BufferUtil.toBuffer("Hello"), true);
-        if (todo != null)
-            todo.run();
+        stream.addContent(BufferUtil.toBuffer("Hello"), true).run();
 
-        stream.waitForComplete(10, TimeUnit.SECONDS);
+        assertTrue(stream.waitForComplete(5, TimeUnit.SECONDS));
         assertThat(stream.isComplete(), is(true));
         assertThat(stream.getFailure(), nullValue());
         assertThat(stream.getResponse(), notNullValue());

@@ -49,7 +49,7 @@ public class HelloHandler extends Handler.Abstract
     }
 
     @Override
-    public boolean handle(Request request, Response response)
+    public boolean handle(Request request, Response response) throws Exception
     {
         response.setStatus(200);
         response.setContentType(MimeTypes.Type.TEXT_PLAIN_UTF_8.asString());

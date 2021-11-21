@@ -29,10 +29,12 @@ import org.eclipse.jetty.http.DateGenerator;
 import org.eclipse.jetty.http.HttpField;
 import org.eclipse.jetty.http.HttpGenerator;
 import org.eclipse.jetty.http.HttpHeader;
+import org.eclipse.jetty.http.HttpHeaderValue;
 import org.eclipse.jetty.http.PreEncodedHttpField;
 import org.eclipse.jetty.io.Connection;
 import org.eclipse.jetty.server.handler.ContextHandler;
 import org.eclipse.jetty.util.Attributes;
+import org.eclipse.jetty.util.Callback;
 import org.eclipse.jetty.util.Jetty;
 import org.eclipse.jetty.util.MultiException;
 import org.eclipse.jetty.util.Uptime;
@@ -45,9 +47,13 @@ import org.eclipse.jetty.util.thread.AutoLock;
 import org.eclipse.jetty.util.thread.QueuedThreadPool;
 import org.eclipse.jetty.util.thread.ShutdownThread;
 import org.eclipse.jetty.util.thread.ThreadPool;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class Server extends Handler.Wrapper implements Attributes
 {
+    private static final Logger LOG = LoggerFactory.getLogger(Server.class);
+
     private final AttributeContainerMap _attributes = new AttributeContainerMap();
     private final ThreadPool _threadPool;
     private final List<Connector> _connectors = new CopyOnWriteArrayList<>();
@@ -129,7 +135,7 @@ public class Server extends Handler.Wrapper implements Attributes
         }
         catch (Throwable t)
         {
-            LOG.warn("handle failed {} {}", this, t);
+            LOG.warn("handle failed {}", this, t);
             // TODO can this all be moved into request.failed?
             if (response.isCommitted())
             {
@@ -140,7 +146,8 @@ public class Server extends Handler.Wrapper implements Attributes
                 // TODO error page?
                 response.reset();
                 response.setStatus(500);
-                request.succeeded();
+                response.addHeader(HttpHeader.CONNECTION, HttpHeaderValue.CLOSE.asString());
+                response.write(true, Callback.from(() -> request.failed(t)));
             }
         }
 

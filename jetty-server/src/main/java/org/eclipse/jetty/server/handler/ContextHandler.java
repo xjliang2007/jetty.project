@@ -268,7 +268,7 @@ public class ContextHandler extends Handler.Wrapper implements Attributes
     }
 
     @Override
-    public boolean handle(Request request, Response response)
+    public boolean handle(Request request, Response response) throws Exception
     {
         Handler next = getHandler();
         if (next == null)
@@ -301,8 +301,7 @@ public class ContextHandler extends Handler.Wrapper implements Attributes
             return false; // TODO 404? 500? Error dispatch ???
 
         // TODO make the lambda part of the scope request to save allocation?
-        // TODO wrap response to add scope on write callback
-        _context.run(() -> next.handle(scoped, new ScopedResponse(response)));
+        _context.call(() -> next.handle(scoped, new ScopedResponse(response)));
         return true;
     }
 
@@ -430,7 +429,7 @@ public class ContextHandler extends Handler.Wrapper implements Attributes
             catch (Exception e)
             {
                 LOG.warn("Failed to run in {}", _displayName, e);
-                // TODO should we let this propagate up as a RuntimeException?
+                throw new RuntimeException(e);
             }
         }
     }

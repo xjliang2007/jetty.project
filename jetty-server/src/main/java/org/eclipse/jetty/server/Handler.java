@@ -52,10 +52,7 @@ import org.slf4j.LoggerFactory;
 @ManagedObject("Handler")
 public interface Handler extends LifeCycle, Destroyable
 {
-    Logger LOG = LoggerFactory.getLogger(Handler.class);
-
-    // TODO should we throw Exception? We have to catch Throwable anyway, so may make handlers a little simpler?
-    boolean handle(Request request, Response response);
+    boolean handle(Request request, Response response) throws Exception;
 
     @ManagedAttribute(value = "the jetty server for this handler", readonly = true)
     Server getServer();
@@ -272,7 +269,7 @@ public interface Handler extends LifeCycle, Destroyable
         }
 
         @Override
-        public boolean handle(Request request, Response response)
+        public boolean handle(Request request, Response response) throws Exception
         {
             Handler next = getHandler();
             return next != null && next.handle(request, response);
@@ -288,11 +285,13 @@ public interface Handler extends LifeCycle, Destroyable
         private volatile List<Handler> _handlers = new ArrayList<>();
 
         @Override
-        public boolean handle(Request request, Response response)
+        public boolean handle(Request request, Response response) throws Exception
         {
             for (Handler h : _handlers)
+            {
                 if (h.handle(request, response))
                     return true;
+            }
             return false;
         }
 
@@ -347,17 +346,31 @@ public interface Handler extends LifeCycle, Destroyable
         protected abstract boolean accept(Request request);
 
         @Override
-        public boolean handle(Request request, Response response)
+        public boolean handle(Request request, Response response) throws Exception
         {
             if (!accept(request))
                 return false;
             if (Invocable.isNonBlockingInvocation())
-                request.execute(() -> blocking(request, response));
+            {
+                request.execute(() ->
+                {
+                    try
+                    {
+                        blocking(request, response);
+                    }
+                    catch (Throwable t)
+                    {
+                        request.failed(t);
+                    }
+                });
+            }
             else
+            {
                 blocking(request, response);
+            }
             return true;
         }
 
-        protected abstract void blocking(Request request, Response response);
+        protected abstract void blocking(Request request, Response response) throws Exception;
     }
 }

@@ -367,8 +367,6 @@ public class HttpConnectionTest
         request.append("abcdefgh"); // actual content of 8 bytes
         request.append("\r\n0;\r\n\r\n"); // last chunk
 
-        System.out.println(request.toString());
-
         String rawResponse = connector.getResponse(request.toString());
         HttpTester.Response response = HttpTester.parseResponse(rawResponse);
         assertThat("Response.status (" + response.getReason() + ")", response.getStatus(), is(HttpStatus.OK_200));
@@ -849,7 +847,7 @@ public class HttpConnectionTest
         server.setHandler(new Handler.Abstract()
         {
             @Override
-            public boolean handle(Request request, Response response)
+            public boolean handle(Request request, Response response) throws Exception
             {
                 response.setStatus(200);
                 response.write(false, request);
@@ -1016,7 +1014,7 @@ public class HttpConnectionTest
             "\r\n" +
             "abcdefghij\r\n";
 
-        try (StacklessLogging stackless = new StacklessLogging(Channel.class))
+        try (StacklessLogging ignored = new StacklessLogging(Handler.class))
         {
             LOG.info("EXPECTING: java.lang.IllegalStateException...");
             String response = connector.getResponse(requests);
@@ -1124,7 +1122,7 @@ public class HttpConnectionTest
         server.setHandler(new Handler.Abstract()
         {
             @Override
-            public boolean handle(Request request, Response response)
+            public boolean handle(Request request, Response response) throws Exception
             {
                 response.setHeader(HttpHeader.CONTENT_TYPE.toString(), MimeTypes.Type.TEXT_HTML.toString());
                 response.setHeader("LongStr", longstr);
@@ -1175,7 +1173,7 @@ public class HttpConnectionTest
         server.setHandler(new Handler.Abstract()
         {
             @Override
-            public boolean handle(Request request, Response response)
+            public boolean handle(Request request, Response response) throws Exception
             {
                 response.setHeader(HttpHeader.CONTENT_TYPE.toString(), MimeTypes.Type.TEXT_HTML.toString());
                 response.setHeader("LongStr", longstr);
@@ -1289,7 +1287,7 @@ public class HttpConnectionTest
         server.setHandler(new Handler.Abstract()
         {
             @Override
-            public boolean handle(Request request, Response response)
+            public boolean handle(Request request, Response response) throws Exception
             {
                 while (true)
                 {

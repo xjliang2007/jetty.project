@@ -47,7 +47,7 @@ class MockStream implements Stream
 
     MockStream(Channel channel, boolean atEof)
     {
-        channel.bind(this);
+        channel.setStream(this);
         _channel = channel;
         if (atEof)
             _content.set(Content.EOF);
@@ -209,12 +209,10 @@ class MockStream implements Stream
     @Override
     public void failed(Throwable x)
     {
+        if (_channel.getMetaConnection() instanceof MockConnectionMetaData)
+            ((MockConnectionMetaData)_channel.getMetaConnection()).notPersistent();
         if (_complete.compareAndSet(null, x == null ? new Throwable() : x))
-        {
-            if (_channel.getMetaConnection() instanceof MockConnectionMetaData)
-                ((MockConnectionMetaData)_channel.getMetaConnection()).notPersistent();
             _completed.countDown();
-        }
     }
 
     @Override

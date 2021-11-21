@@ -22,7 +22,7 @@ import org.eclipse.jetty.util.thread.Invocable;
 public class HandleOnContentHandler extends Handler.Wrapper
 {
     @Override
-    public boolean handle(Request request, Response response)
+    public boolean handle(Request request, Response response) throws Exception
     {
         // If no content or content available, then don't delay dispatch
         if (request.getContentLength() <= 0 && !request.getHeaders().contains(HttpHeader.CONTENT_TYPE))
@@ -46,8 +46,15 @@ public class HandleOnContentHandler extends Handler.Wrapper
         @Override
         public void run()
         {
-            if (!HandleOnContentHandler.super.handle(_request, _response))
-                _request.failed(new IllegalStateException());
+            try
+            {
+                if (!HandleOnContentHandler.super.handle(_request, _response))
+                    _request.failed(new IllegalStateException());
+            }
+            catch (Exception e)
+            {
+                e.printStackTrace();
+            }
         }
 
         @Override

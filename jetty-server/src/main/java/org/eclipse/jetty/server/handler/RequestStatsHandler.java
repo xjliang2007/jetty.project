@@ -36,7 +36,7 @@ public class RequestStatsHandler extends Handler.Wrapper
     private final SampleStatistic _handleTimeStats = new SampleStatistic();
 
     @Override
-    public boolean handle(Request request, Response response)
+    public boolean handle(Request request, Response response) throws Exception
     {
         Object connectionStats = _connectionStats.computeIfAbsent(request.getConnectionMetaData().getId(), id ->
         {

@@ -24,7 +24,7 @@ import org.eclipse.jetty.server.Response;
 public class ProxiedRequestHandler extends Handler.Wrapper
 {
     @Override
-    public boolean handle(Request request, Response response)
+    public boolean handle(Request request, Response response) throws Exception
     {
         ConnectionMetaData proxiedFor = new ConnectionMetaData.Wrapper(request.getConnectionMetaData())
         {

@@ -25,7 +25,7 @@ import org.eclipse.jetty.util.StringUtil;
 public class EchoHandler extends Handler.Abstract
 {
     @Override
-    public boolean handle(Request request, Response response)
+    public boolean handle(Request request, Response response) throws Exception
     {
         response.setStatus(200);
         String contentType = request.getHeaders().get(HttpHeader.CONTENT_TYPE);

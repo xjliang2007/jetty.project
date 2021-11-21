@@ -22,7 +22,7 @@ import org.eclipse.jetty.server.Response;
 public class RewriteHandler extends Handler.Wrapper
 {
     @Override
-    public boolean handle(Request request, Response response)
+    public boolean handle(Request request, Response response) throws Exception
     {
         Request rewritten = rewrite(request, response);
         if (response.isCommitted())

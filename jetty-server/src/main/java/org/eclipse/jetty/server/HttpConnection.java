@@ -40,7 +40,6 @@ import org.eclipse.jetty.http.HttpStatus;
 import org.eclipse.jetty.http.HttpURI;
 import org.eclipse.jetty.http.HttpVersion;
 import org.eclipse.jetty.http.MetaData;
-import org.eclipse.jetty.http.MimeTypes;
 import org.eclipse.jetty.http.PreEncodedHttpField;
 import org.eclipse.jetty.http.UriCompliance;
 import org.eclipse.jetty.io.AbstractConnection;
@@ -895,7 +894,7 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
             Http1Stream stream = new Http1Stream(_headers, method, uri, version);
             if (!_stream.compareAndSet(null, stream))
                 throw new IllegalStateException("Stream pending");
-            _channel.bind(stream);
+            _channel.setStream(stream);
         }
 
         @Override
@@ -960,31 +959,33 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
         }
 
         @Override
-        public void earlyEOF()
-        {
-            // TODO should any 400 error response be routed through the channel for logging?
-
-            if (LOG.isDebugEnabled())
-                LOG.debug("early EOF {}", HttpConnection.this);
-            _generator.setPersistent(false);
-            Http1Stream stream = _stream.getAndSet(null);
-            if (stream == null)
-                stream = new Http1Stream(_headers, "BAD", "/", HttpVersion.HTTP_1_1);
-            stream.sendError(HttpStatus.BAD_REQUEST_400, "early EOF");
-        }
-
-        @Override
         public void badMessage(BadMessageException failure)
         {
-            // TODO should any 400 error response be routed through the channel for logging?
-
             if (LOG.isDebugEnabled())
                 LOG.debug("badMessage {} {}", HttpConnection.this, failure);
             _generator.setPersistent(false);
-            Http1Stream stream = _stream.getAndSet(null);
+
+            Http1Stream stream = _stream.get();
             if (stream == null)
+            {
                 stream = new Http1Stream(_headers, "BAD", "/", HttpVersion.HTTP_1_1);
-            stream.sendError(failure.getCode(), failure.getReason());
+                _stream.set(stream);
+                _channel.setStream(stream);
+            }
+            Runnable todo = _channel.onError(failure);
+            if (todo != null)
+                getServer().getThreadPool().execute(todo);
+        }
+
+        @Override
+        public void earlyEOF()
+        {
+            if (LOG.isDebugEnabled())
+                LOG.debug("early EOF {}", HttpConnection.this);
+            _generator.setPersistent(false);
+            Runnable todo = _channel.onError(new BadMessageException());
+            if (todo != null)
+                getServer().getThreadPool().execute(todo);
         }
     }
 
@@ -1393,30 +1394,13 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
                 return;
             }
 
-            // TODO request log?
-            stream.send(new MetaData.Response(HttpVersion.HTTP_1_1, INTERNAL_SERVER_ERROR_500, HttpFields.build().add(CONNECTION_CLOSE), 0),
-                    true, Callback.NOOP);
+            getEndPoint().close();
         }
 
         @Override
         public InvocationType getInvocationType()
         {
             return Stream.super.getInvocationType();
-        }
-
-        private void sendError(int status, String reason)
-        {
-            HttpFields.Mutable headers = HttpFields.build().add(CONNECTION_CLOSE);
-            ByteBuffer content = BufferUtil.EMPTY_BUFFER;
-            if (reason == null)
-                reason = HttpStatus.getMessage(status);
-            if (!HttpStatus.hasNoBody(status))
-            {
-                headers.put(HttpHeader.CONTENT_TYPE, MimeTypes.Type.TEXT_HTML_8859_1.asString());
-                content = BufferUtil.toBuffer("<h1>Bad Message " + status + "</h1><pre>reason: " + reason + "</pre>");
-            }
-
-            this.send(new MetaData.Response(HttpVersion.HTTP_1_1, status, headers, content.remaining()), true, this, content);
         }
     }
 }

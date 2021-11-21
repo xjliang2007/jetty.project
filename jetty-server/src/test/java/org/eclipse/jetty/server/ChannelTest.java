@@ -322,7 +322,7 @@ public class ChannelTest
         Handler handler = new Handler.Abstract()
         {
             @Override
-            public boolean handle(Request request, Response response)
+            public boolean handle(Request request, Response response) throws Exception
             {
                 return false;
             }
@@ -353,7 +353,7 @@ public class ChannelTest
         Handler handler = new Handler.Abstract()
         {
             @Override
-            public boolean handle(Request request, Response response)
+            public boolean handle(Request request, Response response) throws Exception
             {
                 throw new UnsupportedOperationException("testing");
             }
@@ -375,7 +375,7 @@ public class ChannelTest
         }
 
         assertThat(stream.isComplete(), is(true));
-        assertThat(stream.getFailure(), nullValue());
+        assertThat(stream.getFailure(), notNullValue());
         assertThat(stream.getResponse(), notNullValue());
         assertThat(stream.getResponse().getStatus(), equalTo(500));
         assertThat(stream.getResponse().getFields().get(HttpHeader.CONTENT_TYPE), nullValue());
@@ -388,7 +388,7 @@ public class ChannelTest
         Handler handler = new Handler.Abstract()
         {
             @Override
-            public boolean handle(Request request, Response response)
+            public boolean handle(Request request, Response response) throws Exception
             {
                 response.setStatus(200);
                 response.setContentLength(10);
@@ -426,7 +426,7 @@ public class ChannelTest
         Handler handler = new Handler.Abstract()
         {
             @Override
-            public boolean handle(Request request, Response response)
+            public boolean handle(Request request, Response response) throws Exception
             {
                 response.write(true, request, BufferUtil.toBuffer("12345"));
                 return true;
@@ -458,7 +458,7 @@ public class ChannelTest
         Handler handler = new Handler.Abstract()
         {
             @Override
-            public boolean handle(Request request, Response response)
+            public boolean handle(Request request, Response response) throws Exception
             {
                 response.setContentLength(10);
                 response.write(true, request, BufferUtil.toBuffer("12345"));
@@ -489,7 +489,7 @@ public class ChannelTest
         Handler handler = new Handler.Abstract()
         {
             @Override
-            public boolean handle(Request request, Response response)
+            public boolean handle(Request request, Response response) throws Exception
             {
                 response.setContentLength(10);
                 response.write(false, Callback.from(() -> response.write(true, request)), BufferUtil.toBuffer("12345"));
@@ -520,7 +520,7 @@ public class ChannelTest
         Handler handler = new Handler.Abstract()
         {
             @Override
-            public boolean handle(Request request, Response response)
+            public boolean handle(Request request, Response response) throws Exception
             {
                 response.setContentLength(5);
                 response.write(true, request, BufferUtil.toBuffer("1234567890"));
@@ -551,7 +551,7 @@ public class ChannelTest
         Handler handler = new Handler.Abstract()
         {
             @Override
-            public boolean handle(Request request, Response response)
+            public boolean handle(Request request, Response response) throws Exception
             {
                 response.setContentLength(5);
                 response.write(false, Callback.from(() -> response.write(true, request, BufferUtil.toBuffer("567890"))), BufferUtil.toBuffer("1234"));
@@ -617,7 +617,7 @@ public class ChannelTest
         Handler handler = new Handler.Abstract()
         {
             @Override
-            public boolean handle(Request request, Response response)
+            public boolean handle(Request request, Response response) throws Exception
             {
                 response.setStatus(200);
                 response.setContentType(MimeTypes.Type.TEXT_PLAIN_UTF_8.asString());
@@ -660,7 +660,7 @@ public class ChannelTest
         Handler handler = new Handler.Abstract()
         {
             @Override
-            public boolean handle(Request request, Response response)
+            public boolean handle(Request request, Response response) throws Exception
             {
                 response.setStatus(200);
                 response.addHeader(HttpHeader.CONNECTION, HttpHeaderValue.CLOSE.asString());
@@ -957,7 +957,7 @@ public class ChannelTest
         _server.setHandler(new Handler.Abstract()
         {
             @Override
-            public boolean handle(Request request, Response response)
+            public boolean handle(Request request, Response response) throws Exception
             {
                 LongAdder contentSize = new LongAdder();
                 CountDownLatch latch = new CountDownLatch(1);
@@ -976,18 +976,16 @@ public class ChannelTest
                     }
                 };
                 request.demandContent(onContentAvailable);
-                try
+                if (latch.await(30, TimeUnit.SECONDS))
                 {
-                    if (!latch.await(30, TimeUnit.SECONDS))
-                        request.failed(new IOException());
+                    response.setStatus(200);
+                    response.write(true, request, BufferUtil.toBuffer("contentSize=" + contentSize.longValue()));
                 }
-                catch (Exception e)
+                else
                 {
-                    request.failed(e);
+                    request.failed(new IOException());
                 }
 
-                response.setStatus(200);
-                response.write(true, request, BufferUtil.toBuffer("contentSize=" + contentSize.longValue()));
                 return true;
             }
         });
@@ -1041,7 +1039,7 @@ public class ChannelTest
         Handler handler = new Handler.Abstract()
         {
             @Override
-            public boolean handle(Request request, Response response)
+            public boolean handle(Request request, Response response) throws Exception
             {
                 handling.set(request);
                 request.ifError(t -> {});
@@ -1115,7 +1113,7 @@ public class ChannelTest
         EchoHandler echoHandler = new EchoHandler()
         {
             @Override
-            public boolean handle(Request request, Response response)
+            public boolean handle(Request request, Response response) throws Exception
             {
                 response.whenCommitting(committing::countDown);
                 request.whenComplete(Callback.from(completed::countDown));

@@ -23,11 +23,15 @@ import org.eclipse.jetty.http.BadMessageException;
 import org.eclipse.jetty.http.HttpFields;
 import org.eclipse.jetty.http.HttpHeader;
 import org.eclipse.jetty.http.HttpMethod;
+import org.eclipse.jetty.http.HttpStatus;
 import org.eclipse.jetty.http.HttpURI;
+import org.eclipse.jetty.http.HttpVersion;
 import org.eclipse.jetty.http.MetaData;
+import org.eclipse.jetty.http.MimeTypes;
 import org.eclipse.jetty.http.UriCompliance;
 import org.eclipse.jetty.io.Connection;
 import org.eclipse.jetty.util.AttributesMap;
+import org.eclipse.jetty.util.BufferUtil;
 import org.eclipse.jetty.util.Callback;
 import org.eclipse.jetty.util.HostPort;
 import org.eclipse.jetty.util.thread.AutoLock;
@@ -64,6 +68,7 @@ public class Channel extends AttributesMap
     private Consumer<Throwable> _onConnectionComplete;
     private ChannelRequest _request;
     private ChannelResponse _response;
+    private Callback _onWriteComplete;
 
     public Channel(Server server, ConnectionMetaData connectionMetaData, HttpConfiguration configuration)
     {
@@ -73,7 +78,7 @@ public class Channel extends AttributesMap
         _serializedInvocation = new SerializedInvoker(_server.getThreadPool());
     }
 
-    public void bind(Stream stream)
+    public void setStream(Stream stream)
     {
         try (AutoLock ignored = _lock.lock())
         {
@@ -127,6 +132,9 @@ public class Channel extends AttributesMap
             if (LOG.isDebugEnabled())
                 LOG.debug("onRequest {} {}", request, this);
 
+            if (_request != null)
+                throw new IllegalStateException();
+
             _requests++;
             _request = new ChannelRequest(request);
             _response = new ChannelResponse();
@@ -169,8 +177,8 @@ public class Channel extends AttributesMap
         {
             if (_request == null)
                 return null;
-            Runnable onContent = _request._onContent;
-            _request._onContent = null;
+            Runnable onContent = _request._onContentAvailable;
+            _request._onContentAvailable = null;
             return _serializedInvocation.invoke(onContent);
         }
     }
@@ -180,7 +188,7 @@ public class Channel extends AttributesMap
         // TODO Can this actually be done, as we may need to invoke other Runnables after onContent?
         try (AutoLock ignored = _lock.lock())
         {
-            return Invocable.getInvocationType(_request == null ? null : _request._onContent);
+            return Invocable.getInvocationType(_request == null ? null : _request._onContentAvailable);
         }
     }
 
@@ -198,8 +206,15 @@ public class Channel extends AttributesMap
             if (LOG.isDebugEnabled())
                 LOG.debug("onError {} {}", this, x);
 
-            if (_request == null || _stream == null)
+            if (_stream == null)
                 return null;
+
+            if (_request == null)
+            {
+                _requests++;
+                _request = new ChannelRequest(null);
+                _response = new ChannelResponse();
+            }
 
             ChannelRequest request = _request;
 
@@ -209,20 +224,25 @@ public class Channel extends AttributesMap
             else if (_error.getCause() != x)
             {
                 _error.getCause().addSuppressed(x);
-                return null; // TODO or should we process again?
+                return null;
             }
 
-            // TODO if we are currently demanding, do we include a call to onDataAvailable in the return?
-            //      Currently as implemented we only call onDataAvailable for demand calls that come after the error
-            //      and we assume the Stream will call onDataAvailable for any errors for existing demand?
-            //      It would be moderately safe to force the call to ODA as any subsequent call would be a noop.
-            //      But then we should probably do the same for write callback below, which is a bit more complicated.
-            // Runnable invokeOnDataAvailable = _request._onContent;
-            // _request._onContent = null;
-            Runnable invokeOnDataAvailable = null;
+            // invoke onDataAvailable if we are currently demanding
+            Runnable invokeOnContentAvailable = null;
+            if (_request != null)
+            {
+                invokeOnContentAvailable = _request._onContentAvailable;
+                _request._onContentAvailable = null;
+            }
 
-            // TODO if a write is in progress, do we break the linkage and fail the callback
+            // if a write is in progress, break the linkage and fail the callback
             Runnable invokeWriteFailure = null;
+            if (_onWriteComplete != null)
+            {
+                Callback onWriteComplete = _onWriteComplete;
+                _onWriteComplete = null;
+                invokeWriteFailure = () -> onWriteComplete.failed(x);
+            }
 
             // Invoke any onError listener(s);
             Consumer<Throwable> onError = request._onError;
@@ -230,8 +250,7 @@ public class Channel extends AttributesMap
             Runnable invokeOnError = onError == null ? null : () -> onError.accept(x);
 
             // Serialize all the error actions.
-            // TODO Currently we always fail the request. Should we? or perhaps only if there is no onError listener?
-            return _serializedInvocation.invoke(invokeOnDataAvailable, invokeWriteFailure, invokeOnError, () -> request.failed(x));
+            return _serializedInvocation.invoke(invokeOnContentAvailable, invokeWriteFailure, invokeOnError, () -> request.failed(x));
         }
     }
 
@@ -322,8 +341,15 @@ public class Channel extends AttributesMap
         @Override
         public void run()
         {
-            if (!_server.handle(_request, _response))
-                throw new IllegalStateException();
+            try
+            {
+                if (!_server.handle(_request, _response))
+                    throw new IllegalStateException();
+            }
+            catch (Exception e)
+            {
+                e.printStackTrace();
+            }
         }
 
         @Override
@@ -338,7 +364,7 @@ public class Channel extends AttributesMap
         final MetaData.Request _metaData;
         final String _id = Integer.toString(_requests);
         Consumer<Throwable> _onError;
-        Runnable _onContent;
+        Runnable _onContentAvailable;
 
         private Request _wrapper = this;
 
@@ -451,9 +477,9 @@ public class Channel extends AttributesMap
             boolean error;
             try (AutoLock ignored = _lock.lock())
             {
-                if (_onContent != null && _onContent != onContentAvailable)
+                if (_onContentAvailable != null && _onContentAvailable != onContentAvailable)
                     throw new IllegalArgumentException();
-                _onContent = onContentAvailable;
+                _onContentAvailable = onContentAvailable;
                 error = _error != null;
             }
 
@@ -531,17 +557,21 @@ public class Channel extends AttributesMap
         public void succeeded()
         {
             Stream stream;
+            ChannelResponse response;
             try (AutoLock ignored = _lock.lock())
             {
                 stream = _stream;
+                response = _response;
                 _stream = null;
+                _request = null;
+                _response = null;
             }
 
             if (stream == null)
                 return;
 
             // Commit and complete the response
-            stream.send(_response.commitResponse(true), true, Callback.from(() ->
+            stream.send(response.commitResponse(true), true, Callback.from(() ->
             {
                 // ensure the request is consumed
                 Throwable unconsumed = stream.consumeAll();
@@ -560,15 +590,59 @@ public class Channel extends AttributesMap
             // This is equivalent to the previous HttpTransport.abort(Throwable), so we don't need to do much clean up
             // as channel will be shutdown and thrown away.
             Stream stream;
+            ChannelResponse response;
+            boolean committed;
             try (AutoLock ignored = _lock.lock())
             {
                 stream = _stream;
+                response = _response;
+                committed = _onCommit == COMMITTED;
                 _stream = null;
+                _request = null;
+                _response = null;
             }
+
             if (LOG.isDebugEnabled())
                 LOG.debug("failed {} {}", stream, x);
-            if (stream != null)
+            if (stream == null)
+                return;
+
+            if (committed)
                 stream.failed(x);
+            else
+            {
+                // Try to write a response
+                response.reset();
+                int status = 500;
+                String reason = x.toString();
+                if (x instanceof BadMessageException)
+                {
+                    BadMessageException bme = (BadMessageException)x;
+                    status = bme.getCode();
+                    reason = bme.getReason();
+                }
+                if (reason == null)
+                    reason = HttpStatus.getMessage(status);
+
+                ByteBuffer content = BufferUtil.EMPTY_BUFFER;
+                if (!HttpStatus.hasNoBody(status))
+                {
+                    response.getHeaders().put(HttpHeader.CONTENT_TYPE, MimeTypes.Type.TEXT_HTML_8859_1.asString());
+                    content = BufferUtil.toBuffer("<h1>Bad Message " + status + "</h1><pre>reason: " + reason + "</pre>");
+                }
+
+                stream.send(new MetaData.Response(HttpVersion.HTTP_1_1, status, response.getHeaders().asImmutable(), content.remaining()),
+                    true,
+                    Callback.from(
+                        () -> stream.failed(x),
+                        t ->
+                        {
+                            if (t != x)
+                                x.addSuppressed(t);
+                            stream.failed(x);
+                        }
+                    ), content);
+            }
         }
 
         @Override
@@ -581,7 +655,7 @@ public class Channel extends AttributesMap
     private static final Runnable UNCOMMITTED = () -> {};
     private static final Runnable COMMITTED = () -> {};
 
-    private class ChannelResponse implements Response
+    private class ChannelResponse implements Response, Callback
     {
         private final ChannelRequest _request = Channel.this._request;
         private final ResponseHttpFields _headers = new ResponseHttpFields();
@@ -659,6 +733,9 @@ public class Channel extends AttributesMap
             Content.Error error;
             try (AutoLock ignored = _lock.lock())
             {
+                if (_onWriteComplete != null)
+                    throw new IllegalStateException("Write pending");
+                _onWriteComplete = callback;
                 error = _error;
             }
             if (error != null)
@@ -690,7 +767,42 @@ public class Channel extends AttributesMap
                 return;
             }
 
-            _request.getStream().send(commit, last, callback, content);
+            _request.getStream().send(commit, last, this, content);
+        }
+
+        @Override
+        public void succeeded()
+        {
+            Callback callback;
+            try (AutoLock ignored = _lock.lock())
+            {
+                callback = _onWriteComplete;
+                _onWriteComplete = null;
+            }
+            if (callback != null)
+                callback.succeeded();
+        }
+
+        @Override
+        public void failed(Throwable x)
+        {
+            Callback callback;
+            try (AutoLock ignored = _lock.lock())
+            {
+                callback = _onWriteComplete;
+                _onWriteComplete = null;
+            }
+            if (callback != null)
+                callback.failed(x);
+        }
+
+        @Override
+        public InvocationType getInvocationType()
+        {
+            try (AutoLock ignored = _lock.lock())
+            {
+                return Invocable.getInvocationType(_onWriteComplete);
+            }
         }
 
         private void fail(Callback callback, String reason, Object... args)

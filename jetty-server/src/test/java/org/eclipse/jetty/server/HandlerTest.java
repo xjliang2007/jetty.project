@@ -262,7 +262,7 @@ public class HandlerTest
         c.setHandler(new Handler.Abstract()
         {
             @Override
-            public boolean handle(Request request, Response response)
+            public boolean handle(Request request, Response response) throws Exception
             {
                 return false;
             }
