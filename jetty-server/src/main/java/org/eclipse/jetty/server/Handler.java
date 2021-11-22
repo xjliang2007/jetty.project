@@ -324,14 +324,19 @@ public interface Handler extends LifeCycle, Destroyable
             setHandlers(handlers.length == 0 ? null : Arrays.asList(handlers));
         }
 
-        public void setHandlers(List<Handler> handlers)
+        protected List<Handler> newHandlers(List<Handler> handlers)
         {
-            List<Handler> list = handlers == null
+            return handlers == null
                 ? Collections.emptyList()
                 : Collections.unmodifiableList(new ArrayList<>(handlers));
+        }
+
+        public void setHandlers(List<Handler> handlers)
+        {
+            List<Handler> newHandlers = newHandlers(handlers);
 
             // check for loops
-            for (Handler handler : list)
+            for (Handler handler : newHandlers)
             {
                 if (handler == this || (handler instanceof Handler.Container &&
                     ((Handler.Container)handler).getChildHandlers().contains(this)))
@@ -341,7 +346,7 @@ public interface Handler extends LifeCycle, Destroyable
             }
 
             updateBeans(_handlers, handlers);
-            _handlers = list;
+            _handlers = newHandlers;
         }
 
         public void addHandler(Handler handler)

@@ -13,7 +13,6 @@
 
 module org.eclipse.jetty.server
 {
-    requires transitive jetty.servlet.api;
     requires transitive org.eclipse.jetty.http;
     requires transitive org.slf4j;
 
@@ -26,7 +25,6 @@ module org.eclipse.jetty.server
     exports org.eclipse.jetty.server;
     exports org.eclipse.jetty.server.handler;
     exports org.eclipse.jetty.server.handler.gzip;
-    exports org.eclipse.jetty.server.session;
 
     exports org.eclipse.jetty.server.handler.jmx to
          org.eclipse.jetty.jmx;
