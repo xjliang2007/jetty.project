@@ -43,15 +43,15 @@ public class ContextRequest extends Request.Wrapper
     }
 
     @Override
-    public void ifError(Consumer<Throwable> onError)
+    public void addErrorListener(Consumer<Throwable> onError)
     {
-        super.ifError(t -> _context.accept(onError, t));
+        super.addErrorListener(t -> _context.accept(onError, t));
     }
 
     @Override
-    public void whenComplete(Callback onComplete)
+    public void addCompletionListener(Callback onComplete)
     {
-        super.whenComplete(new Callback()
+        super.addCompletionListener(new Callback()
         {
             @Override
             public void succeeded()

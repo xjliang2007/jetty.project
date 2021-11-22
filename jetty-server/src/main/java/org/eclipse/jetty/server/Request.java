@@ -53,9 +53,9 @@ public interface Request extends Attributes, Callback, Executor
 
     void demandContent(Runnable onContentAvailable);
 
-    void ifError(Consumer<Throwable> onError);
+    void addErrorListener(Consumer<Throwable> onError);
 
-    void whenComplete(Callback onComplete);
+    void addCompletionListener(Callback onComplete);
 
     default Request getWrapped()
     {
@@ -219,15 +219,15 @@ public interface Request extends Attributes, Callback, Executor
         }
 
         @Override
-        public void ifError(Consumer<Throwable> onError)
+        public void addErrorListener(Consumer<Throwable> onError)
         {
-            _wrapped.ifError(onError);
+            _wrapped.addErrorListener(onError);
         }
 
         @Override
-        public void whenComplete(Callback onComplete)
+        public void addCompletionListener(Callback onComplete)
         {
-            _wrapped.whenComplete(onComplete);
+            _wrapped.addCompletionListener(onComplete);
         }
 
         @Override

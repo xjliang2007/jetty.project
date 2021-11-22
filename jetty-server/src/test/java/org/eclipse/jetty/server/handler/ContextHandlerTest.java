@@ -191,8 +191,8 @@ public class ContextHandlerTest
             @Override
             public boolean handle(Request request, Response response) throws Exception
             {
-                request.whenComplete(Callback.from(() -> assertInContext(request)));
-                response.whenCommitting(() -> assertInContext(request));
+                request.addCompletionListener(Callback.from(() -> assertInContext(request)));
+                response.addCommitListener(() -> assertInContext(request));
 
                 request.demandContent(() ->
                 {
@@ -266,8 +266,8 @@ public class ContextHandlerTest
             @Override
             public void blocking(Request request, Response response) throws Exception
             {
-                request.whenComplete(Callback.from(() -> assertInContext(request)));
-                response.whenCommitting(() -> assertInContext(request));
+                request.addCompletionListener(Callback.from(() -> assertInContext(request)));
+                response.addCommitListener(() -> assertInContext(request));
 
                 CountDownLatch latch = new CountDownLatch(1);
                 request.demandContent(() ->

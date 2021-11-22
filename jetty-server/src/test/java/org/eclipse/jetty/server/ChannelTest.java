@@ -787,7 +787,7 @@ public class ChannelTest
         Runnable task = channel.onRequest(request);
 
         List<String> history = new ArrayList<>();
-        channel.whenStreamEvent(s ->
+        channel.addStreamWrapper(s ->
             new Stream.Wrapper(s)
             {
                 @Override
@@ -1045,8 +1045,9 @@ public class ChannelTest
             public boolean handle(Request request, Response response) throws Exception
             {
                 handling.set(request);
-                request.ifError(t -> {});
-                request.ifError(error::set);
+                request.addErrorListener(t -> {});
+                request.addErrorListener(error::set);
+                request.addErrorListener(t -> {});
                 return true;
             }
         };
@@ -1118,8 +1119,8 @@ public class ChannelTest
             @Override
             public boolean handle(Request request, Response response) throws Exception
             {
-                response.whenCommitting(committing::countDown);
-                request.whenComplete(Callback.from(completed::countDown));
+                response.addCommitListener(committing::countDown);
+                request.addCompletionListener(Callback.from(completed::countDown));
                 return super.handle(request, response);
             }
         };

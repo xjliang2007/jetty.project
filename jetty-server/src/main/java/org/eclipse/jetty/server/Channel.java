@@ -61,6 +61,7 @@ public class Channel extends AttributesMap
     private final ConnectionMetaData _connectionMetaData;
     private final HttpConfiguration _configuration;
     private final SerializedExecutor _serializedExecutor;
+
     private Stream _stream;
     private int _requests;
     private Content.Error _error;
@@ -284,7 +285,7 @@ public class Channel extends AttributesMap
             onConnectionClose == null ? null : () -> onConnectionClose.accept(failed));
     }
 
-    public void whenStreamEvent(Function<Stream, Stream.Wrapper> onStreamEvent)
+    public void addStreamWrapper(Function<Stream, Stream.Wrapper> onStreamEvent)
     {
         while (true)
         {
@@ -308,19 +309,19 @@ public class Channel extends AttributesMap
         }
     }
 
-    public void whenConnectionComplete(Consumer<Throwable> onComplete)
+    public void addConnectionCloseListener(Consumer<Throwable> onClose)
     {
         try (AutoLock ignored = _lock.lock())
         {
             if (_onConnectionComplete == null)
-                _onConnectionComplete = onComplete;
+                _onConnectionComplete = onClose;
             else
             {
                 Consumer<Throwable> previous = _onConnectionComplete;
                 _onConnectionComplete = (failed) ->
                 {
                     notifyConnectionClose(previous, failed);
-                    notifyConnectionClose(onComplete, failed);
+                    notifyConnectionClose(onClose, failed);
                 };
             }
         }
@@ -504,7 +505,7 @@ public class Channel extends AttributesMap
         }
 
         @Override
-        public void ifError(Consumer<Throwable> onError)
+        public void addErrorListener(Consumer<Throwable> onError)
         {
             try (AutoLock ignored = _lock.lock())
             {
@@ -535,9 +536,9 @@ public class Channel extends AttributesMap
         }
 
         @Override
-        public void whenComplete(Callback onComplete)
+        public void addCompletionListener(Callback onComplete)
         {
-            whenStreamEvent(s -> new Stream.Wrapper(s)
+            addStreamWrapper(s -> new Stream.Wrapper(s)
             {
                 @Override
                 public void succeeded()
@@ -574,16 +575,21 @@ public class Channel extends AttributesMap
             ChannelResponse response;
             try (AutoLock ignored = _lock.lock())
             {
+                // We are being tough on handler implementations and expect them to not have pending operations
+                // when calling succeeded or failed
+                if (_onContentAvailable != null)
+                    throw new IllegalStateException("onContentAvailable Pending");
+                if (_onWriteComplete != null)
+                    throw new IllegalStateException("write pending");
+
+                // TODO what if
+                boolean hasError = _error != null;
+
                 stream = _stream;
                 response = _response;
                 _stream = null;
                 _request = null;
                 _response = null;
-
-                // TODO what if
-                boolean hasError = _error != null;
-                boolean pendingRead = _onContentAvailable != null;
-                boolean pendingWrite = _onWriteComplete != null;
             }
 
             if (stream == null)
@@ -620,11 +626,10 @@ public class Channel extends AttributesMap
                 _request = null;
                 _response = null;
 
-                // TODO what if
-                boolean hasError = _error != null;
-                boolean pendingRead = _onContentAvailable != null;
-                boolean pendingWrite = _onWriteComplete != null;
-                boolean onError = _onError != null;
+                // Cancel any callbacks
+                _onError = null;
+                _onWriteComplete = null;
+                _onContentAvailable = null;
             }
 
             if (LOG.isDebugEnabled())
@@ -848,7 +853,7 @@ public class Channel extends AttributesMap
         }
 
         @Override
-        public void whenCommitting(Runnable onCommit)
+        public void addCommitListener(Runnable onCommit)
         {
             try (AutoLock ignored = _lock.lock())
             {

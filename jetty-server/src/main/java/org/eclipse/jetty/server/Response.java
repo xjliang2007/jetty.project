@@ -44,7 +44,7 @@ public interface Response
 
     void push(MetaData.Request request);
 
-    void whenCommitting(Runnable onCommit);
+    void addCommitListener(Runnable onCommit);
 
     boolean isCommitted();
 
@@ -157,9 +157,9 @@ public interface Response
         }
 
         @Override
-        public void whenCommitting(Runnable onCommit)
+        public void addCommitListener(Runnable onCommit)
         {
-            _wrapped.whenCommitting(onCommit);
+            _wrapped.addCommitListener(onCommit);
         }
 
         @Override

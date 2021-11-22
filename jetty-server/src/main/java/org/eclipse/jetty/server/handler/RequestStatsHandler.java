@@ -40,7 +40,7 @@ public class RequestStatsHandler extends Handler.Wrapper
     {
         Object connectionStats = _connectionStats.computeIfAbsent(request.getConnectionMetaData().getId(), id ->
         {
-            request.getChannel().whenConnectionComplete(x ->
+            request.getChannel().addConnectionCloseListener(x ->
             {
                 // complete connections stats
                 _connectionStats.remove(request.getConnectionMetaData().getId());
@@ -52,7 +52,7 @@ public class RequestStatsHandler extends Handler.Wrapper
         final LongAdder bytesWritten = new LongAdder();
 
         _requestStats.increment();
-        request.getChannel().whenStreamEvent(s -> new Stream.Wrapper(s)
+        request.getChannel().addStreamWrapper(s -> new Stream.Wrapper(s)
         {
             @Override
             public void send(MetaData.Response response, boolean last, Callback callback, ByteBuffer... content)

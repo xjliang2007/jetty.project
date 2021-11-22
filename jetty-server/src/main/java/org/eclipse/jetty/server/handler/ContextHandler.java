@@ -477,9 +477,9 @@ public class ContextHandler extends Handler.Wrapper implements Attributes
         }
 
         @Override
-        public void whenCommitting(Runnable onCommit)
+        public void addCommitListener(Runnable onCommit)
         {
-            super.whenCommitting(() -> _context.run(onCommit));
+            super.addCommitListener(() -> _context.run(onCommit));
         }
     }
 }
