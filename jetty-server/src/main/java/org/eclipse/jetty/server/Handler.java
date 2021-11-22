@@ -302,6 +302,17 @@ public interface Handler extends LifeCycle, Destroyable
     {
         private volatile List<Handler> _handlers = new ArrayList<>();
 
+        public Collection(Handler... handlers)
+        {
+            if (handlers.length > 0)
+                setHandlers(handlers);
+        }
+
+        public Collection(List<Handler> handlers)
+        {
+            setHandlers(handlers);
+        }
+
         @Override
         public boolean handle(Request request, Response response) throws Exception
         {

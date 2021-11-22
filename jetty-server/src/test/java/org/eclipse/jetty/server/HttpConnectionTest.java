@@ -41,6 +41,7 @@ import org.eclipse.jetty.http.HttpTester;
 import org.eclipse.jetty.http.MimeTypes;
 import org.eclipse.jetty.logging.StacklessLogging;
 import org.eclipse.jetty.server.LocalConnector.LocalEndPoint;
+import org.eclipse.jetty.server.handler.DumpHandler;
 import org.eclipse.jetty.util.BufferUtil;
 import org.eclipse.jetty.util.Callback;
 import org.hamcrest.Matchers;

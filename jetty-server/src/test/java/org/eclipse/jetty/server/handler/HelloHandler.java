@@ -11,12 +11,15 @@
 // ========================================================================
 //
 
-package org.eclipse.jetty.server;
+package org.eclipse.jetty.server.handler;
 
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 
 import org.eclipse.jetty.http.MimeTypes;
+import org.eclipse.jetty.server.Handler;
+import org.eclipse.jetty.server.Request;
+import org.eclipse.jetty.server.Response;
 import org.eclipse.jetty.util.BufferUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

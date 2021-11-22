@@ -11,9 +11,13 @@
 // ========================================================================
 //
 
-package org.eclipse.jetty.server;
+package org.eclipse.jetty.server.handler;
 
 import org.eclipse.jetty.http.HttpHeader;
+import org.eclipse.jetty.server.Content;
+import org.eclipse.jetty.server.Handler;
+import org.eclipse.jetty.server.Request;
+import org.eclipse.jetty.server.Response;
 import org.eclipse.jetty.util.IteratingCallback;
 import org.eclipse.jetty.util.StringUtil;
 

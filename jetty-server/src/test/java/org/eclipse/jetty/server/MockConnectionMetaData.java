@@ -20,7 +20,7 @@ import org.eclipse.jetty.http.HttpVersion;
 import org.eclipse.jetty.io.Connection;
 import org.eclipse.jetty.util.Attributes;
 
-class MockConnectionMetaData extends Attributes.Mapped implements ConnectionMetaData
+public class MockConnectionMetaData extends Attributes.Mapped implements ConnectionMetaData
 {
     boolean _persistent = true;
 

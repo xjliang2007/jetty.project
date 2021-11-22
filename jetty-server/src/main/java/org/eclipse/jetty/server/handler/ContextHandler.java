@@ -59,6 +59,16 @@ public class ContextHandler extends Handler.Wrapper implements Attributes
     private Path _resourceBase;
     private ClassLoader _contextLoader;
 
+    public ContextHandler()
+    {
+        this("/");
+    }
+
+    public ContextHandler(String contextPath)
+    {
+        setContextPath(contextPath);
+    }
+
     @ManagedAttribute(value = "Context")
     public Context getContext()
     {
@@ -265,6 +275,11 @@ public class ContextHandler extends Handler.Wrapper implements Attributes
     public void destroy()
     {
         _context.run(super::destroy);
+    }
+
+    public boolean isAvailable()
+    {
+        return isStarted(); // TODO
     }
 
     @Override

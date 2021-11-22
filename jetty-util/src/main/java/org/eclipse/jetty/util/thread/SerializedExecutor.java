@@ -54,7 +54,7 @@ public class SerializedExecutor implements Executor
      * @return A Runnable that must be called to invoke the passed task and possibly other tasks. Null if the
      *         task will be invoked by another caller.
      */
-    public Runnable invoke(Runnable task)
+    public Runnable offer(Runnable task)
     {
         if (task == null)
             return null;
@@ -72,7 +72,7 @@ public class SerializedExecutor implements Executor
      * @return A Runnable that must be called to invoke the passed tasks and possibly other tasks. Null if the
      *         tasks will be invoked by another caller.
      */
-    public Runnable invoke(Runnable... tasks)
+    public Runnable offer(Runnable... tasks)
     {
         Runnable runnable = null;
         for (Runnable run : tasks)
@@ -80,35 +80,36 @@ public class SerializedExecutor implements Executor
             if (run != null)
             {
                 if (runnable == null)
-                    runnable = invoke(run);
+                    runnable = offer(run);
                 else
-                    invoke(run);
+                    offer(run);
             }
         }
+        // TODO combine the invocation types of queued jobs for the first runnable
         return runnable;
     }
 
     /**
      * Arrange for a task to be executed, mutually excluded from other tasks.
-     * This is equivalent to executing any {@link Runnable} returned from {@link #invoke(Runnable)}
+     * This is equivalent to executing any {@link Runnable} returned from {@link #offer(Runnable)}
      * @param task The task to invoke
      */
     @Override
     public void execute(Runnable task)
     {
-        Runnable todo = invoke(task);
+        Runnable todo = offer(task);
         if (todo != null)
             _executor.execute(todo);
     }
 
     /**
      * Arrange for tasks to be executed, mutually excluded from other tasks.
-     * This is equivalent to executing any {@link Runnable} returned from {@link #invoke(Runnable...)}
+     * This is equivalent to executing any {@link Runnable} returned from {@link #offer(Runnable...)}
      * @param tasks The tasks to invoke
      */
     public void execute(Runnable... tasks)
     {
-        Runnable todo = invoke(tasks);
+        Runnable todo = offer(tasks);
         if (todo != null)
             _executor.execute(todo);
     }

@@ -27,7 +27,7 @@ import org.eclipse.jetty.io.Connection;
 import org.eclipse.jetty.util.BufferUtil;
 import org.eclipse.jetty.util.Callback;
 
-class MockStream implements Stream
+public class MockStream implements Stream
 {
     private static final Throwable SUCCEEDED = new Throwable();
     private static final Content DEMAND = new Content.Abstract(true, false) {};
@@ -40,12 +40,12 @@ class MockStream implements Stream
     private final Channel _channel;
     private final AtomicReference<MetaData.Response> _response = new AtomicReference<>();
 
-    MockStream(Channel channel)
+    public MockStream(Channel channel)
     {
         this(channel, true);
     }
 
-    MockStream(Channel channel, boolean atEof)
+    public MockStream(Channel channel, boolean atEof)
     {
         channel.setStream(this);
         _channel = channel;

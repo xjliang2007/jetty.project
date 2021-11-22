@@ -186,7 +186,7 @@ public interface Content
             _cause = cause == null ? new IOException("unknown") : cause;
         }
 
-        Throwable getCause()
+        public Throwable getCause()
         {
             return _cause;
         }

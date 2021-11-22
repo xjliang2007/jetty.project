@@ -60,7 +60,7 @@ public class Channel extends AttributesMap
     private final Server _server;
     private final ConnectionMetaData _connectionMetaData;
     private final HttpConfiguration _configuration;
-    private final SerializedExecutor _serializedInvocation;
+    private final SerializedExecutor _serializedExecutor;
     private Stream _stream;
     private int _requests;
     private Content.Error _error;
@@ -75,7 +75,19 @@ public class Channel extends AttributesMap
         _server = server;
         _connectionMetaData = connectionMetaData;
         _configuration = configuration;
-        _serializedInvocation = new SerializedExecutor(_server.getThreadPool());
+        _serializedExecutor = new SerializedExecutor(_server.getThreadPool())
+        {
+            @Override
+            protected void onError(Runnable task, Throwable t)
+            {
+                if (_error != null && _error.getCause() != null)
+                {
+                    if (_error.getCause() != t)
+                        _error.getCause().addSuppressed(t);
+                }
+                super.onError(task, t);
+            }
+        };
     }
 
     public void setStream(Stream stream)
@@ -179,7 +191,7 @@ public class Channel extends AttributesMap
                 return null;
             Runnable onContent = _request._onContentAvailable;
             _request._onContentAvailable = null;
-            return _serializedInvocation.invoke(onContent);
+            return _serializedExecutor.offer(onContent);
         }
     }
 
@@ -252,7 +264,7 @@ public class Channel extends AttributesMap
             Runnable invokeOnError = onError == null ? null : () -> onError.accept(x);
 
             // Serialize all the error actions.
-            return _serializedInvocation.invoke(invokeOnContentAvailable, invokeWriteFailure, invokeOnError, () -> request.failed(x));
+            return _serializedExecutor.offer(invokeOnContentAvailable, invokeWriteFailure, invokeOnError, () -> request.failed(x));
         }
     }
 
@@ -267,8 +279,8 @@ public class Channel extends AttributesMap
             _onConnectionComplete = null;
         }
 
-        return _serializedInvocation.invoke(
-            hasStream ? () -> _serializedInvocation.execute(() -> onError(failed)) : null,
+        return _serializedExecutor.offer(
+            hasStream ? () -> _serializedExecutor.execute(() -> onError(failed)) : null,
             onConnectionClose == null ? null : () -> onConnectionClose.accept(failed));
     }
 
@@ -486,7 +498,7 @@ public class Channel extends AttributesMap
             }
 
             if (error)
-                _serializedInvocation.execute(Channel.this.onContentAvailable());
+                _serializedExecutor.execute(Channel.this.onContentAvailable());
             else
                 getStream().demandContent();
         }
@@ -498,7 +510,7 @@ public class Channel extends AttributesMap
             {
                 if (_error != null)
                 {
-                    _serializedInvocation.execute(() -> onError.accept(_error.getCause()));
+                    _serializedExecutor.execute(() -> onError.accept(_error.getCause()));
                     return;
                 }
 
@@ -755,7 +767,7 @@ public class Channel extends AttributesMap
             }
             if (error != null)
             {
-                _serializedInvocation.execute(() -> callback.failed(error.getCause()));
+                _serializedExecutor.execute(() -> callback.failed(error.getCause()));
                 return;
             }
 

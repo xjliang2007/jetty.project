@@ -57,9 +57,9 @@ public class SerializedExecutorTest
         Task task2 = new Task();
         Task task3 = new Task();
 
-        Runnable todo = _invoker.invoke(task1);
-        assertNull(_invoker.invoke(task2));
-        assertNull(_invoker.invoke(task3));
+        Runnable todo = _invoker.offer(task1);
+        assertNull(_invoker.offer(task2));
+        assertNull(_invoker.offer(task3));
 
         assertFalse(task1.hasRun());
         assertFalse(task2.hasRun());
@@ -72,7 +72,7 @@ public class SerializedExecutorTest
         assertTrue(task3.hasRun());
 
         Task task4 = new Task();
-        todo = _invoker.invoke(task4);
+        todo = _invoker.offer(task4);
         todo.run();
         assertTrue(task4.hasRun());
     }
@@ -84,7 +84,7 @@ public class SerializedExecutorTest
         Task task2 = new Task();
         Task task3 = new Task();
 
-        Runnable todo = _invoker.invoke(null, task1, null, task2, null, task3, null);
+        Runnable todo = _invoker.offer(null, task1, null, task2, null, task3, null);
 
         assertFalse(task1.hasRun());
         assertFalse(task2.hasRun());
@@ -97,7 +97,7 @@ public class SerializedExecutorTest
         assertTrue(task3.hasRun());
 
         Task task4 = new Task();
-        todo = _invoker.invoke(task4);
+        todo = _invoker.offer(task4);
         todo.run();
         assertTrue(task4.hasRun());
     }
@@ -111,7 +111,7 @@ public class SerializedExecutorTest
             @Override
             public void run()
             {
-                assertNull(_invoker.invoke(task3));
+                assertNull(_invoker.offer(task3));
                 super.run();
             }
         };
@@ -120,12 +120,12 @@ public class SerializedExecutorTest
             @Override
             public void run()
             {
-                assertNull(_invoker.invoke(task2));
+                assertNull(_invoker.offer(task2));
                 super.run();
             }
         };
 
-        Runnable todo = _invoker.invoke(task1);
+        Runnable todo = _invoker.offer(task1);
 
         assertFalse(task1.hasRun());
         assertFalse(task2.hasRun());
@@ -138,7 +138,7 @@ public class SerializedExecutorTest
         assertTrue(task3.hasRun());
 
         Task task4 = new Task();
-        todo = _invoker.invoke(task4);
+        todo = _invoker.offer(task4);
         todo.run();
         assertTrue(task4.hasRun());
     }
@@ -158,7 +158,7 @@ public class SerializedExecutorTest
         };
         Task task3 = new Task(Invocable.InvocationType.BLOCKING);
 
-        Runnable todo = _invoker.invoke(task1, task2, task3);
+        Runnable todo = _invoker.offer(task1, task2, task3);
 
         assertFalse(task1.hasRun());
         assertFalse(task2.hasRun());
@@ -182,7 +182,7 @@ public class SerializedExecutorTest
         assertTrue(task3.hasRun());
 
         Task task4 = new Task();
-        todo = _invoker.invoke(task4);
+        todo = _invoker.offer(task4);
         todo.run();
         assertTrue(task4.hasRun());
     }
@@ -192,7 +192,7 @@ public class SerializedExecutorTest
     {
         Task task1 = new Task();
         Task task2 = new Task();
-        Runnable todo = _invoker.invoke(() -> _invoker.execute(_invoker.invoke(task1)), task2);
+        Runnable todo = _invoker.offer(() -> _invoker.execute(_invoker.offer(task1)), task2);
 
         todo.run();
 

@@ -234,7 +234,23 @@ public interface HttpFields extends Iterable<HttpField>
      */
     default long getDateField(String name)
     {
-        HttpField field = getField(name);
+        return parseDateField(getField(name));
+    }
+
+    /**
+     * Get a header as a date value. Returns the value of a date field, or -1 if not found. The case
+     * of the field name is ignored.
+     *
+     * @param header the header
+     * @return the value of the field as a number of milliseconds since unix epoch
+     */
+    default long getDateField(HttpHeader header)
+    {
+        return parseDateField(getField(header));
+    }
+
+    static long parseDateField(HttpField field)
+    {
         if (field == null)
             return -1;
 
