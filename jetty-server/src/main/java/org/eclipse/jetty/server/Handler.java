@@ -18,6 +18,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
+import org.eclipse.jetty.util.Callback;
 import org.eclipse.jetty.util.annotation.ManagedAttribute;
 import org.eclipse.jetty.util.annotation.ManagedObject;
 import org.eclipse.jetty.util.annotation.ManagedOperation;
@@ -25,6 +26,7 @@ import org.eclipse.jetty.util.component.ContainerLifeCycle;
 import org.eclipse.jetty.util.component.Destroyable;
 import org.eclipse.jetty.util.component.LifeCycle;
 import org.eclipse.jetty.util.thread.Invocable;
+import org.eclipse.jetty.util.thread.Invocable.InvocationType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -52,6 +54,19 @@ import org.slf4j.LoggerFactory;
 @ManagedObject("Handler")
 public interface Handler extends LifeCycle, Destroyable
 {
+
+    /**
+     * Handle an HTTP request and produce a response.
+     * Implementations of this method should strive to be non-blocking, but may block subject on if
+     * {@link Invocable#isNonBlockingInvocation()} returns false.  Thus tasks calling this method
+     * may be scheduled with type {@link InvocationType#EITHER}. The {@link Blocking} sub-class
+     * will execute blocking handling if the invocation type is non-blocking.
+     * @param request The immutable request, which is also a {@link Callback} used to signal success or failure.
+     * @param response The muttable response
+     * @return True if this handle has or will handle the request. This is a commitment to ultimately call
+     *         either {@link Request#succeeded()} or {@link Request#failed(Throwable)}.
+     * @throws Exception Thrown if there is a problem handling.
+     */
     boolean handle(Request request, Response response) throws Exception;
 
     @ManagedAttribute(value = "the jetty server for this handler", readonly = true)
@@ -74,6 +89,39 @@ public interface Handler extends LifeCycle, Destroyable
         return null;
     }
 
+    /**
+     * A Handler that contains one or more other handlers
+     */
+    interface Container extends Handler
+    {
+        /**
+         * @return immutable collection of handlers directly contained by this handler.
+         */
+        @ManagedAttribute("handlers in this container")
+        List<Handler> getHandlers();
+
+        /**
+         * @param byclass the child handler class to get
+         * @return collection of all handlers contained by this handler and it's children of the passed type.
+         */
+        <T extends Handler> List<T> getChildHandlersByClass(Class<T> byclass);
+
+        default List<Handler> getChildHandlers()
+        {
+            return getChildHandlersByClass(Handler.class);
+        }
+
+        /**
+         * @param byclass the child handler class to get
+         * @param <T> the type of handler
+         * @return first handler of all handlers contained by this handler and it's children of the passed type.
+         */
+        <T extends Handler> T getChildHandlerByClass(Class<T> byclass);
+    }
+
+    /**
+     * An Abstract Handler that is a {@link ContainerLifeCycle}
+     */
     abstract class Abstract extends ContainerLifeCycle implements Handler
     {
         private static final Logger LOG = LoggerFactory.getLogger(Abstract.class);
@@ -119,36 +167,6 @@ public interface Handler extends LifeCycle, Destroyable
                 throw new IllegalStateException(getState());
             super.destroy();
         }
-    }
-
-    /**
-     * A Handler that contains one or more other handlers
-     */
-    interface Container extends Handler
-    {
-        /**
-         * @return immutable collection of handlers directly contained by this handler.
-         */
-        @ManagedAttribute("handlers in this container")
-        List<Handler> getHandlers();
-
-        /**
-         * @param byclass the child handler class to get
-         * @return collection of all handlers contained by this handler and it's children of the passed type.
-         */
-        <T extends Handler> List<T> getChildHandlersByClass(Class<T> byclass);
-
-        default List<Handler> getChildHandlers()
-        {
-            return getChildHandlersByClass(Handler.class);
-        }
-
-        /**
-         * @param byclass the child handler class to get
-         * @param <T> the type of handler
-         * @return first handler of all handlers contained by this handler and it's children of the passed type.
-         */
-        <T extends Handler> T getChildHandlerByClass(Class<T> byclass);
     }
 
     /**
