@@ -47,6 +47,21 @@ public class SerializedExecutor implements Executor
         _executor = executor;
     }
 
+    private Link newLink(Runnable task)
+    {
+        switch (Invocable.getInvocationType(task))
+        {
+            case EITHER:
+                return new EitherLink(task);
+            case BLOCKING:
+                return new BlockingLink(task);
+            case NON_BLOCKING:
+                return new NonBlockingLink(task);
+            default:
+                throw new IllegalStateException();
+        }
+    }
+
     /**
      * Arrange for a task to be invoked, mutually excluded from other tasks.
      * @param task The task to invoke
@@ -57,25 +72,11 @@ public class SerializedExecutor implements Executor
     {
         if (task == null)
             return null;
-        Link link;
-        switch (Invocable.getInvocationType(task))
-        {
-            case EITHER:
-                link = new EitherLink(task);
-                break;
-            case BLOCKING:
-                link = new BlockingLink(task);
-                break;
-            case NON_BLOCKING:
-                link = new NonBlockingLink(task);
-                break;
-            default:
-                throw new IllegalStateException();
-        }
-        Link lastButOne = _tail.getAndSet(link);
-        if (lastButOne == null)
+        Link link = newLink(task);
+        Link penultimate = _tail.getAndSet(link);
+        if (penultimate == null)
             return link;
-        lastButOne._next.lazySet(link);
+        penultimate._next.lazySet(link);
         return null;
     }
 
@@ -88,17 +89,13 @@ public class SerializedExecutor implements Executor
     public Runnable offer(Runnable... tasks)
     {
         Runnable runnable = null;
-        for (Runnable run : tasks)
+        for (Runnable task : tasks)
         {
-            if (run != null)
-            {
-                if (runnable == null)
-                    runnable = offer(run);
-                else
-                    offer(run);
-            }
+            if (runnable == null)
+                runnable = offer(task);
+            else
+                offer(task);
         }
-        // TODO combine the invocation types of queued jobs for the first runnable
         return runnable;
     }
 
