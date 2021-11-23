@@ -24,10 +24,9 @@ import org.slf4j.LoggerFactory;
  * Ensures serial invocation of submitted tasks, respecting the {@link InvocationType}
  * <p>
  * The {@link InvocationType} of the {@link Runnable} returned from this class is
- * the the result of {@link Invocable#combine(InvocationType, InvocationType)} on all the passed tasks
- * at the time that the {@link Runnable} was generated.  If subsequent tasks are invoked, then they may need to be executed
- * if their {@link InvocationType} is not compatible with the calling thread (as
- * per {@link Invocable#isNonBlockingInvocation()}.
+ * the type of the first task offered. If subsequent tasks are offered, then they may need to be executed
+ * with {@link Executor#execute(Runnable)} or invoked with {@link Invocable#invokeNonBlocking(Runnable)}
+ * depending on their {@link InvocationType} and/or the calling threads type (as per {@link Invocable#isNonBlockingInvocation()}.
  * <p>
  * This class was inspired by the public domain class
  * <a href="https://github.com/jroper/reactive-streams-servlet/blob/master/reactive-streams-servlet/src/main/java/org/reactivestreams/servlet/NonBlockingMutexExecutor.java">NonBlockingMutexExecutor</a>
@@ -58,7 +57,21 @@ public class SerializedExecutor implements Executor
     {
         if (task == null)
             return null;
-        Link link = new Link(task);
+        Link link;
+        switch (Invocable.getInvocationType(task))
+        {
+            case EITHER:
+                link = new EitherLink(task);
+                break;
+            case BLOCKING:
+                link = new BlockingLink(task);
+                break;
+            case NON_BLOCKING:
+                link = new NonBlockingLink(task);
+                break;
+            default:
+                throw new IllegalStateException();
+        }
         Link lastButOne = _tail.getAndSet(link);
         if (lastButOne == null)
             return link;
@@ -114,6 +127,30 @@ public class SerializedExecutor implements Executor
             _executor.execute(todo);
     }
 
+    /**
+     * Arrange for a task to be run, mutually excluded from other tasks.
+     * This is equivalent to directly running any {@link Runnable} returned from {@link #offer(Runnable)}
+     * @param task The task to invoke
+     */
+    public void run(Runnable task)
+    {
+        Runnable todo = offer(task);
+        if (todo != null)
+            todo.run();
+    }
+
+    /**
+     * Arrange for tasks to be executed, mutually excluded from other tasks.
+     * This is equivalent to directly running any {@link Runnable} returned from {@link #offer(Runnable...)}
+     * @param tasks The tasks to invoke
+     */
+    public void run(Runnable... tasks)
+    {
+        Runnable todo = offer(tasks);
+        if (todo != null)
+            todo.run();
+    }
+
     protected void onError(Runnable task, Throwable t)
     {
         try
@@ -129,85 +166,143 @@ public class SerializedExecutor implements Executor
         LoggerFactory.getLogger(task.getClass()).error("Error", t);
     }
 
-    private void invoke(Link link, boolean runningBlocking)
-    {
-        while (link != null)
-        {
-            try
-            {
-                // if we are running in blocking mode
-                if (runningBlocking)
-                {
-                    // we can just call the task directly
-                    link._task.run();
-                }
-                else
-                {
-                    // we are running in non blocking mode
-                    switch (Invocable.getInvocationType(link._task))
-                    {
-                        case BLOCKING:
-                            // The task is blocking, so execute it
-                            _executor.execute(link);
-                            return;
-
-                        case NON_BLOCKING:
-                            // the task is also non_blocking, so just run it
-                            link._task.run();
-                            break;
-
-                        case EITHER:
-                            // the task is either, so invoke it in non blocking mode
-                            Invocable.invokeNonBlocking(link._task);
-                            break;
-                    }
-                }
-            }
-            catch (Throwable t)
-            {
-                onError(link._task, t);
-            }
-
-            // Are we the current the last Link?
-            if (_tail.compareAndSet(link, null))
-                link = null;
-            else
-            {
-                // not the last task, so its next link will eventually be set
-                Link next = link._next.get();
-                while (next == null)
-                {
-                    Thread.onSpinWait();
-                    next = link._next.get();
-                }
-                link = next;
-            }
-        }
-    }
-
-    private class Link implements Runnable, Invocable
+    private abstract class Link implements Runnable, Invocable
     {
         private final Runnable _task;
+        private final InvocationType _type;
         private final AtomicReference<Link> _next = new AtomicReference<>();
 
-        public Link(Runnable task)
+        public Link(Runnable task, InvocationType type)
         {
             _task = task;
-        }
-
-        @Override
-        public void run()
-        {
-            // We are running in blocking mode if BLOCKING or it is EITHER and we were not invoked non-blocking
-            InvocationType runningAs = Invocable.getInvocationType(_task);
-            boolean runningBlocking = runningAs == InvocationType.BLOCKING || runningAs == InvocationType.EITHER && !Invocable.isNonBlockingInvocation();
-            invoke(this, runningBlocking);
+            _type = type;
         }
 
         @Override
         public InvocationType getInvocationType()
         {
-            return Invocable.getInvocationType(_task);
+            return _type;
+        }
+
+        Link next()
+        {
+            // Are we the current the last Link?
+            if (_tail.compareAndSet(this, null))
+                return null;
+
+            // not the last task, so its next link will eventually be set
+            while (true)
+            {
+                Link next = _next.get();
+                if (next != null)
+                    return next;
+                Thread.onSpinWait();
+            }
+        }
+    }
+
+    private class EitherLink extends Link
+    {
+        public EitherLink(Runnable task)
+        {
+            super(task, InvocationType.EITHER);
+        }
+
+        @Override
+        public void run()
+        {
+            Link link = this;
+            while (link != null)
+            {
+                try
+                {
+                    switch (link._type)
+                    {
+                        case EITHER:
+                        case NON_BLOCKING:
+                            link._task.run();
+                            break;
+                        case BLOCKING:
+                            if (Invocable.isNonBlockingInvocation())
+                            {
+                                _executor.execute(link);
+                                return;
+                            }
+                            link._task.run();
+                            break;
+                    }
+                }
+                catch (Throwable t)
+                {
+                    onError(link._task, t);
+                }
+
+                link = link.next();
+            }
+        }
+    }
+
+    private class BlockingLink extends Link
+    {
+        public BlockingLink(Runnable task)
+        {
+            super(task, InvocationType.BLOCKING);
+        }
+
+        @Override
+        public void run()
+        {
+            Link link = this;
+            while (link != null)
+            {
+                try
+                {
+                    link._task.run();
+                }
+                catch (Throwable t)
+                {
+                    onError(link._task, t);
+                }
+                link = link.next();
+            }
+        }
+    }
+
+    private class NonBlockingLink extends Link
+    {
+        public NonBlockingLink(Runnable task)
+        {
+            super(task, InvocationType.NON_BLOCKING);
+        }
+
+        @Override
+        public void run()
+        {
+            Link link = this;
+            while (link != null)
+            {
+                try
+                {
+                    switch (link._type)
+                    {
+                        case NON_BLOCKING:
+                            link._task.run();
+                            break;
+                        case BLOCKING:
+                            _executor.execute(link);
+                            return;
+                        case EITHER:
+                            Invocable.invokeNonBlocking(link._task);
+                            break;
+                    }
+                }
+                catch (Throwable t)
+                {
+                    onError(link._task, t);
+                }
+
+                link = link.next();
+            }
         }
     }
 

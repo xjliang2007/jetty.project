@@ -33,21 +33,21 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class SerializedExecutorTest
 {
-    Queue<Runnable> _queue = new ConcurrentLinkedQueue<>();
-    Executor _executor = command -> _queue.add(command);
-    SerializedExecutor _invoker;
+    Queue<Runnable> _execQueue = new ConcurrentLinkedQueue<>();
+    Executor _executor = command -> _execQueue.add(command);
+    SerializedExecutor _serialExec;
 
     @BeforeEach
     public void beforeEach()
     {
-        _queue.clear();
-        _invoker = new SerializedExecutor(_executor);
+        _execQueue.clear();
+        _serialExec = new SerializedExecutor(_executor);
     }
 
     @AfterEach
     public void afterEach()
     {
-        assertThat(_queue, empty());
+        assertThat(_execQueue, empty());
     }
 
     @Test
@@ -57,9 +57,9 @@ public class SerializedExecutorTest
         Task task2 = new Task();
         Task task3 = new Task();
 
-        Runnable todo = _invoker.offer(task1);
-        assertNull(_invoker.offer(task2));
-        assertNull(_invoker.offer(task3));
+        Runnable todo = _serialExec.offer(task1);
+        assertNull(_serialExec.offer(task2));
+        assertNull(_serialExec.offer(task3));
 
         assertFalse(task1.hasRun());
         assertFalse(task2.hasRun());
@@ -72,19 +72,19 @@ public class SerializedExecutorTest
         assertTrue(task3.hasRun());
 
         Task task4 = new Task();
-        todo = _invoker.offer(task4);
+        todo = _serialExec.offer(task4);
         todo.run();
         assertTrue(task4.hasRun());
     }
 
     @Test
-    public void testMulti() throws Exception
+    public void testMulti()
     {
         Task task1 = new Task();
         Task task2 = new Task();
         Task task3 = new Task();
 
-        Runnable todo = _invoker.offer(null, task1, null, task2, null, task3, null);
+        Runnable todo = _serialExec.offer(null, task1, null, task2, null, task3, null);
 
         assertFalse(task1.hasRun());
         assertFalse(task2.hasRun());
@@ -97,13 +97,13 @@ public class SerializedExecutorTest
         assertTrue(task3.hasRun());
 
         Task task4 = new Task();
-        todo = _invoker.offer(task4);
+        todo = _serialExec.offer(task4);
         todo.run();
         assertTrue(task4.hasRun());
     }
 
     @Test
-    public void testRecursive() throws Exception
+    public void testRecursive()
     {
         Task task3 = new Task();
         Task task2 = new Task()
@@ -111,7 +111,7 @@ public class SerializedExecutorTest
             @Override
             public void run()
             {
-                assertNull(_invoker.offer(task3));
+                assertNull(_serialExec.offer(task3));
                 super.run();
             }
         };
@@ -120,12 +120,12 @@ public class SerializedExecutorTest
             @Override
             public void run()
             {
-                assertNull(_invoker.offer(task2));
+                assertNull(_serialExec.offer(task2));
                 super.run();
             }
         };
 
-        Runnable todo = _invoker.offer(task1);
+        Runnable todo = _serialExec.offer(task1);
 
         assertFalse(task1.hasRun());
         assertFalse(task2.hasRun());
@@ -138,14 +138,15 @@ public class SerializedExecutorTest
         assertTrue(task3.hasRun());
 
         Task task4 = new Task();
-        todo = _invoker.offer(task4);
+        todo = _serialExec.offer(task4);
         todo.run();
         assertTrue(task4.hasRun());
     }
 
     @Test
-    public void testNonBlocking() throws Exception
+    public void testNonBlocking()
     {
+        Task task0 = new Task(Invocable.InvocationType.NON_BLOCKING);
         Task task1 = new Task(Invocable.InvocationType.NON_BLOCKING);
         Task task2 = new Task(Invocable.InvocationType.EITHER)
         {
@@ -158,41 +159,136 @@ public class SerializedExecutorTest
         };
         Task task3 = new Task(Invocable.InvocationType.BLOCKING);
 
-        Runnable todo = _invoker.offer(task1, task2, task3);
+        Runnable todo = _serialExec.offer(task0, task1, task2, task3);
 
+        assertFalse(task0.hasRun());
         assertFalse(task1.hasRun());
         assertFalse(task2.hasRun());
         assertFalse(task3.hasRun());
         assertThat(Invocable.getInvocationType(todo), equalTo(Invocable.InvocationType.NON_BLOCKING));
+        assertThat(_execQueue.size(), is(0));
 
         todo.run();
 
+        assertTrue(task0.hasRun());
         assertTrue(task1.hasRun());
         assertTrue(task2.hasRun());
         assertFalse(task3.hasRun());
-        assertThat(_queue.size(), is(1));
+        assertThat(_execQueue.size(), is(1));
 
-        todo = _queue.poll();
+        todo = _execQueue.poll();
         assertThat(todo, notNullValue());
         assertThat(Invocable.getInvocationType(todo), equalTo(Invocable.InvocationType.BLOCKING));
 
         todo.run();
+        assertTrue(task0.hasRun());
         assertTrue(task1.hasRun());
         assertTrue(task2.hasRun());
         assertTrue(task3.hasRun());
-
-        Task task4 = new Task();
-        todo = _invoker.offer(task4);
-        todo.run();
-        assertTrue(task4.hasRun());
     }
 
     @Test
-    public void testSelfInvocation() throws Exception
+    public void testBlocking()
+    {
+        Task task0 = new Task(Invocable.InvocationType.BLOCKING);
+        Runnable todo = _serialExec.offer(task0);
+        assertThat(Invocable.getInvocationType(todo), is(Invocable.InvocationType.BLOCKING));
+
+        Task task1 = new Task(Invocable.InvocationType.NON_BLOCKING);
+        Task task2 = new Task(Invocable.InvocationType.BLOCKING);
+        Task task3 = new Task(Invocable.InvocationType.EITHER)
+        {
+            @Override
+            public void run()
+            {
+                assertFalse(Invocable.isNonBlockingInvocation());
+                super.run();
+            }
+        };
+        assertNull(_serialExec.offer(task1, task2, task3));
+
+        todo.run();
+        assertThat(_execQueue.size(), is(0));
+        assertTrue(task0.hasRun());
+        assertTrue(task1.hasRun());
+        assertTrue(task2.hasRun());
+        assertTrue(task3.hasRun());
+    }
+
+    @Test
+    public void testEitherAsBlocking()
+    {
+        Task task0 = new Task(Invocable.InvocationType.EITHER);
+        Runnable todo = _serialExec.offer(task0);
+        assertThat(Invocable.getInvocationType(todo), is(Invocable.InvocationType.EITHER));
+
+        Task task1 = new Task(Invocable.InvocationType.NON_BLOCKING);
+        Task task2 = new Task(Invocable.InvocationType.BLOCKING);
+        Task task3 = new Task(Invocable.InvocationType.EITHER)
+        {
+            @Override
+            public void run()
+            {
+                assertFalse(Invocable.isNonBlockingInvocation());
+                super.run();
+            }
+        };
+        assertNull(_serialExec.offer(task1, task2, task3));
+
+        todo.run();
+        assertThat(_execQueue.size(), is(0));
+        assertTrue(task0.hasRun());
+        assertTrue(task1.hasRun());
+        assertTrue(task2.hasRun());
+        assertTrue(task3.hasRun());
+    }
+
+    @Test
+    public void testEitherAsNonBlocking()
+    {
+        Task task0 = new Task(Invocable.InvocationType.EITHER);
+        Runnable todo = _serialExec.offer(task0);
+        assertThat(Invocable.getInvocationType(todo), is(Invocable.InvocationType.EITHER));
+
+        Task task1 = new Task(Invocable.InvocationType.EITHER)
+        {
+            @Override
+            public void run()
+            {
+                assertTrue(Invocable.isNonBlockingInvocation());
+                super.run();
+            }
+        };
+        Task task2 = new Task(Invocable.InvocationType.NON_BLOCKING);
+        Task task3 = new Task(Invocable.InvocationType.BLOCKING);
+        assertNull(_serialExec.offer(task1, task2, task3));
+
+        Invocable.invokeNonBlocking(todo);
+
+        assertThat(_execQueue.size(), is(1));
+        assertTrue(task0.hasRun());
+        assertTrue(task1.hasRun());
+        assertTrue(task2.hasRun());
+        assertFalse(task3.hasRun());
+
+        todo = _execQueue.poll();
+        assertThat(todo, notNullValue());
+        assertThat(Invocable.getInvocationType(todo), is(Invocable.InvocationType.BLOCKING));
+        assertThat(Invocable.getInvocationType(todo), equalTo(Invocable.InvocationType.BLOCKING));
+
+        todo.run();
+        assertTrue(task0.hasRun());
+        assertTrue(task1.hasRun());
+        assertTrue(task2.hasRun());
+        assertTrue(task3.hasRun());
+    }
+
+    @Test
+    public void testSelfInvocation()
     {
         Task task1 = new Task();
         Task task2 = new Task();
-        Runnable todo = _invoker.offer(() -> _invoker.execute(_invoker.offer(task1)), task2);
+        Runnable todo = _serialExec.offer(() -> _serialExec.execute(_serialExec.offer(task1)), task2);
 
         todo.run();
 
