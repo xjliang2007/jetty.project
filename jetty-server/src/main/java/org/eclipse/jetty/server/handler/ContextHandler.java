@@ -475,11 +475,5 @@ public class ContextHandler extends Handler.Wrapper implements Attributes
             };
             super.write(last, contextCallback, content);
         }
-
-        @Override
-        public void addCommitListener(Runnable onCommit)
-        {
-            super.addCommitListener(() -> _context.run(onCommit));
-        }
     }
 }

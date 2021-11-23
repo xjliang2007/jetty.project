@@ -35,6 +35,11 @@ class ResponseHttpFields extends HttpFields.Mutable
         return this;
     }
 
+    public boolean isReadOnly()
+    {
+        return _readOnly;
+    }
+
     public void recycle()
     {
         _readOnly = false;

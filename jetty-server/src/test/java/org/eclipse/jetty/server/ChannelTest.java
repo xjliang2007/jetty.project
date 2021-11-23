@@ -482,7 +482,7 @@ public class ChannelTest
 
         assertThat(stream.isComplete(), is(true));
         assertThat(stream.getFailure(), notNullValue());
-        assertThat(stream.getFailure().getMessage(), containsString("content-length 10 != 5"));
+        assertThat(stream.getFailure().getMessage(), containsString("content-length 10 > 5"));
         assertThat(stream.getResponse(), nullValue());
     }
 
@@ -544,7 +544,7 @@ public class ChannelTest
 
         assertThat(stream.isComplete(), is(true));
         assertThat(stream.getFailure(), notNullValue());
-        assertThat(stream.getFailure().getMessage(), containsString("content-length 5 != 10"));
+        assertThat(stream.getFailure().getMessage(), containsString("content-length 5 < 10"));
         assertThat(stream.getResponse(), nullValue());
     }
 
@@ -1119,7 +1119,6 @@ public class ChannelTest
             @Override
             public boolean handle(Request request, Response response) throws Exception
             {
-                response.addCommitListener(committing::countDown);
                 request.addCompletionListener(Callback.from(completed::countDown));
                 return super.handle(request, response);
             }
@@ -1129,7 +1128,15 @@ public class ChannelTest
 
         ConnectionMetaData connectionMetaData = new MockConnectionMetaData();
         Channel channel = new Channel(_server, connectionMetaData, new HttpConfiguration());
-        MockStream stream = new MockStream(channel, false);
+        MockStream stream = new MockStream(channel, false)
+        {
+            @Override
+            public void send(MetaData.Response response, boolean last, Callback callback, ByteBuffer... content)
+            {
+                committing.countDown();
+                super.send(response, last, callback, content);
+            }
+        };
 
         HttpFields fields = HttpFields.build()
             .add(HttpHeader.HOST, "localhost")

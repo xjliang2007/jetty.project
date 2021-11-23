@@ -192,7 +192,6 @@ public class ContextHandlerTest
             public boolean handle(Request request, Response response) throws Exception
             {
                 request.addCompletionListener(Callback.from(() -> assertInContext(request)));
-                response.addCommitListener(() -> assertInContext(request));
 
                 request.demandContent(() ->
                 {
@@ -267,7 +266,6 @@ public class ContextHandlerTest
             public void blocking(Request request, Response response) throws Exception
             {
                 request.addCompletionListener(Callback.from(() -> assertInContext(request)));
-                response.addCommitListener(() -> assertInContext(request));
 
                 CountDownLatch latch = new CountDownLatch(1);
                 request.demandContent(() ->

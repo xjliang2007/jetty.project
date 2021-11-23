@@ -44,8 +44,6 @@ public interface Response
 
     void push(MetaData.Request request);
 
-    void addCommitListener(Runnable onCommit);
-
     boolean isCommitted();
 
     void reset();
@@ -154,12 +152,6 @@ public interface Response
         public void push(MetaData.Request request)
         {
             _wrapped.push(request);
-        }
-
-        @Override
-        public void addCommitListener(Runnable onCommit)
-        {
-            _wrapped.addCommitListener(onCommit);
         }
 
         @Override

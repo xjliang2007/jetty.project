@@ -25,7 +25,6 @@ import org.eclipse.jetty.http.HttpHeader;
 import org.eclipse.jetty.http.HttpMethod;
 import org.eclipse.jetty.http.HttpStatus;
 import org.eclipse.jetty.http.HttpURI;
-import org.eclipse.jetty.http.HttpVersion;
 import org.eclipse.jetty.http.MetaData;
 import org.eclipse.jetty.http.MimeTypes;
 import org.eclipse.jetty.http.UriCompliance;
@@ -563,7 +562,11 @@ public class Channel extends AttributesMap
         @Override
         public void succeeded()
         {
+            // Called when the request/response cycle is completing successfully.
             Stream stream;
+            MetaData.Response commit;
+            long contentLength;
+            long written;
             try (AutoLock ignored = _lock.lock())
             {
                 // We are being tough on handler implementations and expect them to not have pending operations
@@ -572,43 +575,75 @@ public class Channel extends AttributesMap
                     throw new IllegalStateException("onContentAvailable Pending");
                 if (_response._onWriteComplete != null)
                     throw new IllegalStateException("write pending");
+                if (_error != null)
+                    throw new IllegalStateException("error " + _error);
 
-                // TODO what if
-                boolean hasError = _error != null;
-
+                if (_stream == null | _request != this)
+                    return;
                 stream = _stream;
-                Channel.this._stream = null;
-                Channel.this._request = null;
+                _stream = null;
+                _request = null;
+
+                commit = _response.commitResponse(true);
+                contentLength = _response._contentLength;
+                written = _response._written;
             }
 
-            if (stream == null)
-                return;
-
             // Commit and complete the response
-            stream.send(_response.commitResponse(true), true, Callback.from(() ->
-            {
-                // ensure the request is consumed
-                Throwable unconsumed = stream.consumeAll();
-                if (LOG.isDebugEnabled())
-                    LOG.debug("consumeAll {} ", this, unconsumed);
-                if (unconsumed != null && getConnectionMetaData().isPersistent())
-                    stream.failed(unconsumed);
-                else
-                    stream.succeeded();
-            }, stream::failed));
+            if (contentLength >= 0L && contentLength != written)
+                stream.failed(new IOException(String.format("contentLength %d != %d", contentLength, written)));
+            else
+                stream.send(commit, true, Callback.from(() ->
+                {
+                    // ensure the request is consumed
+                    Throwable unconsumed = stream.consumeAll();
+                    if (LOG.isDebugEnabled())
+                        LOG.debug("consumeAll {} ", this, unconsumed);
+                    if (unconsumed != null && getConnectionMetaData().isPersistent())
+                        stream.failed(unconsumed);
+                    else
+                        stream.succeeded();
+                }, stream::failed));
         }
 
         @Override
         public void failed(Throwable x)
         {
+            // Called when the request/response cycle is completing with a failure.
             // This is equivalent to the previous HttpTransport.abort(Throwable), so we don't need to do much clean up
             // as channel will be shutdown and thrown away.
             Stream stream;
-            boolean committed;
+            MetaData.Response commit = null;
+            ByteBuffer content = BufferUtil.EMPTY_BUFFER;
             try (AutoLock ignored = _lock.lock())
             {
+                if (_stream == null || _request != this)
+                    return;
+
+                // Can we write out an error response
+                if (!_response._headers.isReadOnly())
+                {
+                    _response._headers.clear();
+                    _response._status = 500;
+                    String reason = x.toString();
+                    if (x instanceof BadMessageException)
+                    {
+                        BadMessageException bme = (BadMessageException)x;
+                        _response._status = bme.getCode();
+                        reason = bme.getReason();
+                    }
+                    if (reason == null)
+                        reason = HttpStatus.getMessage(_response._status);
+
+                    if (!HttpStatus.hasNoBody(_response._status))
+                    {
+                        _response.getHeaders().put(HttpHeader.CONTENT_TYPE, MimeTypes.Type.TEXT_HTML_8859_1.asString());
+                        content = BufferUtil.toBuffer("<h1>Bad Message " + _response._status + "</h1><pre>reason: " + reason + "</pre>");
+                        _response._written = content.remaining();
+                        commit = _response.commitResponse(true);
+                    }
+                }
                 stream = _stream;
-                committed = _response._onCommit == COMMITTED;
                 _stream = null;
                 _request = null;
 
@@ -620,36 +655,13 @@ public class Channel extends AttributesMap
 
             if (LOG.isDebugEnabled())
                 LOG.debug("failed {} {}", stream, x);
-            if (stream == null)
-                return;
 
             // committed, but the stream is still able to send a response
-            if (committed)
+            if (commit == null)
                 stream.failed(x);
             else
             {
-                // Try to write an error response
-                _response.reset();
-                int status = 500;
-                String reason = x.toString();
-                if (x instanceof BadMessageException)
-                {
-                    BadMessageException bme = (BadMessageException)x;
-                    status = bme.getCode();
-                    reason = bme.getReason();
-                }
-                if (reason == null)
-                    reason = HttpStatus.getMessage(status);
-
-                _response.setStatus(status);
-                ByteBuffer content = BufferUtil.EMPTY_BUFFER;
-                if (!HttpStatus.hasNoBody(status))
-                {
-                    _response.getHeaders().put(HttpHeader.CONTENT_TYPE, MimeTypes.Type.TEXT_HTML_8859_1.asString());
-                    content = BufferUtil.toBuffer("<h1>Bad Message " + status + "</h1><pre>reason: " + reason + "</pre>");
-                }
-
-                stream.send(new MetaData.Response(HttpVersion.HTTP_1_1, status, _response.getHeaders().asImmutable(), content.remaining()),
+                stream.send(commit,
                     true,
                     Callback.from(
                         () -> stream.failed(x),
@@ -670,15 +682,11 @@ public class Channel extends AttributesMap
         }
     }
 
-    private static final Runnable UNCOMMITTED = () -> {};
-    private static final Runnable COMMITTED = () -> {};
-
     private class ChannelResponse implements Response, Callback
     {
         private final ChannelRequest _request;
         private final ResponseHttpFields _headers = new ResponseHttpFields();
         private int _status;
-        private Runnable _onCommit = UNCOMMITTED;
         private ResponseHttpFields _trailers;
         private Callback _onWriteComplete;
         private long _written;
@@ -755,49 +763,52 @@ public class Channel extends AttributesMap
         @Override
         public void write(boolean last, Callback callback, ByteBuffer... content)
         {
-            Content.Error error;
+            MetaData.Response commit;
+            long contentLength;
+            long written;
             try (AutoLock ignored = _lock.lock())
             {
                 if (_onWriteComplete != null)
                     throw new IllegalStateException("Write pending");
+
+                if (_request._error != null)
+                {
+                    _serializedExecutor.execute(() -> callback.failed(_request._error.getCause()));
+                    return;
+                }
+
                 _onWriteComplete = callback;
-                error = _request._error;
-            }
-            if (error != null)
-            {
-                _serializedExecutor.execute(() -> callback.failed(error.getCause()));
-                return;
+                for (ByteBuffer b : content)
+                    _written += b.remaining();
+
+                commit = commitResponse(last);
+                contentLength = _contentLength;
+                written = _written;
             }
 
-            for (ByteBuffer b : content)
-                _written += b.remaining();
-            if (_contentLength >= 0)
+            // If the content lengths were not compatible with what was written, then we need to abort
+            if (contentLength >= 0)
             {
-                if (_contentLength < _written)
+                if (contentLength < written)
                 {
-                    fail(callback, "content-length %d < %d", _contentLength, _written);
+                    fail(callback, "content-length %d < %d", contentLength, written);
                     return;
                 }
-                if (last && _contentLength > _written)
+                if (last && contentLength > written)
                 {
-                    fail(callback, "content-length %d > %d", _contentLength, _written);
+                    fail(callback, "content-length %d > %d", contentLength, written);
                     return;
                 }
             }
 
-            MetaData.Response commit = commitResponse(last);
-            if (commit != null && last && _contentLength != _written)
-            {
-                fail(callback, "content-length %d != %d", _contentLength, _written);
-                return;
-            }
-
+            // Do the write
             _request.getStream().send(commit, last, this, content);
         }
 
         @Override
         public void succeeded()
         {
+            // Called when an individual write succeeds
             Callback callback;
             try (AutoLock ignored = _lock.lock())
             {
@@ -811,6 +822,7 @@ public class Channel extends AttributesMap
         @Override
         public void failed(Throwable x)
         {
+            // Called when an individual write fails
             Callback callback;
             try (AutoLock ignored = _lock.lock())
             {
@@ -846,34 +858,11 @@ public class Channel extends AttributesMap
         }
 
         @Override
-        public void addCommitListener(Runnable onCommit)
-        {
-            try (AutoLock ignored = _lock.lock())
-            {
-                if (_onCommit == COMMITTED)
-                    throw new IllegalStateException("Committed");
-
-                if (_onCommit == UNCOMMITTED)
-                    _onCommit = onCommit;
-                else
-                {
-
-                    Runnable previous = _onCommit;
-                    _onCommit = () ->
-                    {
-                        notifyRunnable(previous);
-                        notifyRunnable(onCommit);
-                    };
-                }
-            }
-        }
-
-        @Override
         public boolean isCommitted()
         {
             try (AutoLock ignored = _lock.lock())
             {
-                return _onCommit == COMMITTED;
+                return _headers.isReadOnly();
             }
         }
 
@@ -882,7 +871,7 @@ public class Channel extends AttributesMap
         {
             try (AutoLock ignored = _lock.lock())
             {
-                if (_onCommit == COMMITTED)
+                if (_headers.isReadOnly())
                     throw new IllegalStateException("Committed");
 
                 _headers.clear(); // TODO re-add or don't delete default fields
@@ -894,59 +883,42 @@ public class Channel extends AttributesMap
 
         private MetaData.Response commitResponse(boolean last)
         {
-            Runnable committed;
-            Supplier<HttpFields> trailers;
-            try (AutoLock ignored = _lock.lock())
+            if (!_lock.isHeldByCurrentThread())
+                throw new IllegalStateException();
+
+            // Are we already committed?
+            if (_headers.isReadOnly())
+                return null;
+
+            // Assume 200 unless told otherwise
+            if (_status == 0)
+                _status = HttpStatus.OK_200;
+
+            // Can we set the content length?
+            _contentLength = _headers.getLongField(HttpHeader.CONTENT_LENGTH);
+            if (last && _contentLength < 0L)
             {
-                if (_onCommit == COMMITTED)
-                    return null;
-
-                committed = _onCommit;
-                _onCommit = COMMITTED;
-
-                if (_status == 0)
-                    _status = 200;
-
-                _contentLength = _headers.getLongField(HttpHeader.CONTENT_LENGTH);
-                if (last && _contentLength < 0L)
-                {
-                    _contentLength = _written;
-                    _headers.putLongField(HttpHeader.CONTENT_LENGTH, _contentLength);
-                }
-
-                if (_configuration.getSendDateHeader() && !_headers.contains(HttpHeader.DATE))
-                    _headers.put(getServer().getDateField());
-
-                _headers.toReadOnly();
-
-                trailers = _trailers == null ? null : this::takeTrailers;
+                _contentLength = _written;
+                _headers.putLongField(HttpHeader.CONTENT_LENGTH, _contentLength);
             }
 
-            if (committed != UNCOMMITTED)
-                notifyRunnable(committed);
+            // Add the date header
+            if (_configuration.getSendDateHeader() && !_headers.contains(HttpHeader.DATE))
+                _headers.put(getServer().getDateField());
+
+            // Freeze the headers and mark this response as committed
+            _headers.toReadOnly();
+
+            // Provide trailers if they exist
+            Supplier<HttpFields> trailers = _trailers == null ? null : this::takeTrailers;
 
             return new MetaData.Response(
-                _request._metaData.getHttpVersion(),
+                getMetaConnection().getVersion(),
                 _status,
                 null,
                 _headers,
                 -1,
                 trailers);
-        }
-
-        private void notifyRunnable(Runnable runnable)
-        {
-            if (runnable != null)
-            {
-                try
-                {
-                    runnable.run();
-                }
-                catch (Throwable t)
-                {
-                    t.printStackTrace();
-                }
-            }
         }
     }
 }
