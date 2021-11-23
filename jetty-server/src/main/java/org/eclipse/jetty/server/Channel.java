@@ -61,15 +61,11 @@ public class Channel extends AttributesMap
     private final ConnectionMetaData _connectionMetaData;
     private final HttpConfiguration _configuration;
     private final SerializedExecutor _serializedExecutor;
+    private int _requests;
 
     private Stream _stream;
-    private int _requests;
-    private Content.Error _error;
-    private Runnable _onCommit = UNCOMMITTED;
-    private Consumer<Throwable> _onConnectionComplete;
     private ChannelRequest _request;
-    private ChannelResponse _response;
-    private Callback _onWriteComplete;
+    private Consumer<Throwable> _onConnectionComplete;
 
     public Channel(Server server, ConnectionMetaData connectionMetaData, HttpConfiguration configuration)
     {
@@ -81,11 +77,19 @@ public class Channel extends AttributesMap
             @Override
             protected void onError(Runnable task, Throwable t)
             {
-                if (_error != null && _error.getCause() != null)
+                Content.Error error;
+                try (AutoLock ignore = _lock.lock())
                 {
-                    if (_error.getCause() != t)
-                        _error.getCause().addSuppressed(t);
+                    error = _request == null ? null : _request._error;
                 }
+                if (error != null && error.getCause() != null)
+                {
+                    if (error.getCause() != t)
+                        error.getCause().addSuppressed(t);
+                }
+
+                // TODO should we call Channel#onError here?
+
                 super.onError(task, t);
             }
         };
@@ -98,7 +102,6 @@ public class Channel extends AttributesMap
             if (_stream != null)
                 throw new IllegalStateException("Stream pending");
             _stream = stream;
-            _onCommit = UNCOMMITTED;
         }
     }
 
@@ -148,9 +151,7 @@ public class Channel extends AttributesMap
             if (_request != null)
                 throw new IllegalStateException();
 
-            _requests++;
             _request = new ChannelRequest(request);
-            _response = new ChannelResponse();
 
             if (!_request.getPath().startsWith("/") && !HttpMethod.OPTIONS.is(request.getMethod()) && !HttpMethod.CONNECT.is(request.getMethod()))
                 throw new BadMessageException();
@@ -180,7 +181,7 @@ public class Channel extends AttributesMap
     {
         try (AutoLock ignored = _lock.lock())
         {
-            return _response;
+            return _request == null ? null : _request._response;
         }
     }
 
@@ -224,42 +225,28 @@ public class Channel extends AttributesMap
                 return null;
 
             // If the channel doesn't have a request, then the error must have occurred during parsing the request header
-            if (_request == null)
-            {
-                // Make a temp request for logging and producing 400 response.
-                _requests++;
-                _request = new ChannelRequest(null);
-                _response = new ChannelResponse();
-            }
+            // Make a temp request for logging and producing 400 response.
+            ChannelRequest request = _request == null ? _request = new ChannelRequest(null) : _request;
 
             // Remember the error and arrange for any subsequent reads, demands or writes to fail with this error
-            if (_error == null)
-                _error = new Content.Error(x);
-            else if (_error.getCause() != x)
+            if (request._error == null)
+                request._error = new Content.Error(x);
+            else if (request._error.getCause() != x)
             {
-                _error.getCause().addSuppressed(x);
+                request._error.getCause().addSuppressed(x);
                 return null;
             }
 
             // invoke onDataAvailable if we are currently demanding
-            Runnable invokeOnContentAvailable = null;
-            if (_request != null)
-            {
-                invokeOnContentAvailable = _request._onContentAvailable;
-                _request._onContentAvailable = null;
-            }
+            Runnable invokeOnContentAvailable = request._onContentAvailable;
+            request._onContentAvailable = null;
 
             // if a write is in progress, break the linkage and fail the callback
-            Runnable invokeWriteFailure = null;
-            if (_onWriteComplete != null)
-            {
-                Callback onWriteComplete = _onWriteComplete;
-                _onWriteComplete = null;
-                invokeWriteFailure = () -> onWriteComplete.failed(x);
-            }
+            Callback onWriteComplete = request._response._onWriteComplete;
+            request._response._onWriteComplete = null;
+            Runnable invokeWriteFailure = onWriteComplete == null ? null : () -> onWriteComplete.failed(x);
 
             // Invoke any onError listener(s);
-            ChannelRequest request = _request;
             Consumer<Throwable> onError = request._onError;
             request._onError = null;
             Runnable invokeOnError = onError == null ? null : () -> onError.accept(x);
@@ -358,7 +345,7 @@ public class Channel extends AttributesMap
         {
             try
             {
-                if (!_server.handle(_request, _response))
+                if (!_server.handle(_request, _request._response))
                     throw new IllegalStateException();
             }
             catch (Exception e)
@@ -377,7 +364,9 @@ public class Channel extends AttributesMap
     private class ChannelRequest extends AttributesMap implements Request
     {
         final MetaData.Request _metaData;
-        final String _id = Integer.toString(_requests);
+        final String _id;
+        final ChannelResponse _response;
+        Content.Error _error;
         Consumer<Throwable> _onError;
         Runnable _onContentAvailable;
 
@@ -385,7 +374,10 @@ public class Channel extends AttributesMap
 
         ChannelRequest(MetaData.Request metaData)
         {
+            _requests++;
+            _id = Integer.toString(_requests);
             _metaData = metaData;
+            _response = new ChannelResponse(this);
         }
 
         @Override
@@ -572,31 +564,28 @@ public class Channel extends AttributesMap
         public void succeeded()
         {
             Stream stream;
-            ChannelResponse response;
             try (AutoLock ignored = _lock.lock())
             {
                 // We are being tough on handler implementations and expect them to not have pending operations
                 // when calling succeeded or failed
                 if (_onContentAvailable != null)
                     throw new IllegalStateException("onContentAvailable Pending");
-                if (_onWriteComplete != null)
+                if (_response._onWriteComplete != null)
                     throw new IllegalStateException("write pending");
 
                 // TODO what if
                 boolean hasError = _error != null;
 
                 stream = _stream;
-                response = _response;
-                _stream = null;
-                _request = null;
-                _response = null;
+                Channel.this._stream = null;
+                Channel.this._request = null;
             }
 
             if (stream == null)
                 return;
 
             // Commit and complete the response
-            stream.send(response.commitResponse(true), true, Callback.from(() ->
+            stream.send(_response.commitResponse(true), true, Callback.from(() ->
             {
                 // ensure the request is consumed
                 Throwable unconsumed = stream.consumeAll();
@@ -615,20 +604,17 @@ public class Channel extends AttributesMap
             // This is equivalent to the previous HttpTransport.abort(Throwable), so we don't need to do much clean up
             // as channel will be shutdown and thrown away.
             Stream stream;
-            ChannelResponse response;
             boolean committed;
             try (AutoLock ignored = _lock.lock())
             {
                 stream = _stream;
-                response = _response;
-                committed = _onCommit == COMMITTED;
+                committed = _response._onCommit == COMMITTED;
                 _stream = null;
                 _request = null;
-                _response = null;
 
                 // Cancel any callbacks
                 _onError = null;
-                _onWriteComplete = null;
+                _response._onWriteComplete = null;
                 _onContentAvailable = null;
             }
 
@@ -643,7 +629,7 @@ public class Channel extends AttributesMap
             else
             {
                 // Try to write an error response
-                response.reset();
+                _response.reset();
                 int status = 500;
                 String reason = x.toString();
                 if (x instanceof BadMessageException)
@@ -655,15 +641,15 @@ public class Channel extends AttributesMap
                 if (reason == null)
                     reason = HttpStatus.getMessage(status);
 
-                response.setStatus(status);
+                _response.setStatus(status);
                 ByteBuffer content = BufferUtil.EMPTY_BUFFER;
                 if (!HttpStatus.hasNoBody(status))
                 {
-                    response.getHeaders().put(HttpHeader.CONTENT_TYPE, MimeTypes.Type.TEXT_HTML_8859_1.asString());
+                    _response.getHeaders().put(HttpHeader.CONTENT_TYPE, MimeTypes.Type.TEXT_HTML_8859_1.asString());
                     content = BufferUtil.toBuffer("<h1>Bad Message " + status + "</h1><pre>reason: " + reason + "</pre>");
                 }
 
-                stream.send(new MetaData.Response(HttpVersion.HTTP_1_1, status, response.getHeaders().asImmutable(), content.remaining()),
+                stream.send(new MetaData.Response(HttpVersion.HTTP_1_1, status, _response.getHeaders().asImmutable(), content.remaining()),
                     true,
                     Callback.from(
                         () -> stream.failed(x),
@@ -689,13 +675,20 @@ public class Channel extends AttributesMap
 
     private class ChannelResponse implements Response, Callback
     {
-        private final ChannelRequest _request = Channel.this._request;
+        private final ChannelRequest _request;
         private final ResponseHttpFields _headers = new ResponseHttpFields();
+        private int _status;
+        private Runnable _onCommit = UNCOMMITTED;
         private ResponseHttpFields _trailers;
+        private Callback _onWriteComplete;
         private long _written;
         private long _contentLength = -1L;
         private Response _wrapper;
-        private int _status;
+
+        private ChannelResponse(ChannelRequest request)
+        {
+            _request = request;
+        }
 
         @Override
         public Request getRequest()
@@ -768,7 +761,7 @@ public class Channel extends AttributesMap
                 if (_onWriteComplete != null)
                     throw new IllegalStateException("Write pending");
                 _onWriteComplete = callback;
-                error = _error;
+                error = _request._error;
             }
             if (error != null)
             {
@@ -926,7 +919,7 @@ public class Channel extends AttributesMap
 
                 _headers.toReadOnly();
 
-                trailers = _trailers == null ? null : _response::takeTrailers;
+                trailers = _trailers == null ? null : this::takeTrailers;
             }
 
             if (committed != UNCOMMITTED)

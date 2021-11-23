@@ -855,6 +855,7 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
         @Override
         protected void onCompleteSuccess()
         {
+            // TODO is this too late to get the request?
             boolean upgrading = _channel.getRequest() != null && _channel.getRequest().getAttribute(Channel.UPGRADE_CONNECTION_ATTRIBUTE) != null;
             release().succeeded();
             // If successfully upgraded it is responsibility of the next protocol to close the connection.
