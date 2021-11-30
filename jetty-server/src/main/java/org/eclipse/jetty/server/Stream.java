@@ -37,6 +37,8 @@ public interface Stream extends Callback
 
     void push(MetaData.Request request);
 
+    boolean isCommitted();
+
     boolean isComplete();
 
     void upgrade(org.eclipse.jetty.io.Connection connection);
@@ -112,6 +114,11 @@ public interface Stream extends Callback
         public void push(MetaData.Request request)
         {
             _wrapped.push(request);
+        }
+
+        public final boolean isCommitted()
+        {
+            return _wrapped.isCommitted();
         }
 
         public final boolean isComplete()

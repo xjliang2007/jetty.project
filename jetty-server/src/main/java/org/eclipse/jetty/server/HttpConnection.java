@@ -57,6 +57,7 @@ import org.eclipse.jetty.util.Callback;
 import org.eclipse.jetty.util.HostPort;
 import org.eclipse.jetty.util.IteratingCallback;
 import org.eclipse.jetty.util.StringUtil;
+import org.eclipse.jetty.util.thread.Invocable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -112,7 +113,7 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
 
     public HttpConnection(HttpConfiguration configuration, Connector connector, EndPoint endPoint, boolean recordComplianceViolations)
     {
-        super(endPoint, connector.getExecutor());
+        super(endPoint, connector.getExecutor(), Invocable.InvocationType.EITHER);
         _configuration = configuration;
         _connector = connector;
         _bufferPool = _connector.getByteBufferPool();
@@ -1290,6 +1291,12 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
         public void push(MetaData.Request request)
         {
             throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public boolean isCommitted()
+        {
+            return _stream.get() != this || _generator.isCommitted();
         }
 
         @Override

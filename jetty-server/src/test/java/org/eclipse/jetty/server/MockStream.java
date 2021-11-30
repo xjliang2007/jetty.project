@@ -182,6 +182,13 @@ public class MockStream implements Stream
     }
 
     @Override
+    public boolean isCommitted()
+    {
+        MetaData.Response response = _response.get();
+        return response != null && response.getStatus() >= 200;
+    }
+
+    @Override
     public boolean isComplete()
     {
         return _completed.getCount() == 0;

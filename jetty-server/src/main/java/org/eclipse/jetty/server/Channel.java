@@ -621,19 +621,21 @@ public class Channel extends AttributesMap
                     return;
 
                 // Can we write out an error response
-                if (!_response._headers.isReadOnly())
+                if (!_stream.isCommitted())
                 {
-                    _response._headers.clear();
-                    _response._status = 500;
+                    int status = HttpStatus.INTERNAL_SERVER_ERROR_500;
                     String reason = x.toString();
                     if (x instanceof BadMessageException)
                     {
                         BadMessageException bme = (BadMessageException)x;
-                        _response._status = bme.getCode();
+                        status = bme.getCode();
                         reason = bme.getReason();
                     }
                     if (reason == null)
                         reason = HttpStatus.getMessage(_response._status);
+
+                    _response._headers.recycle();
+                    _response._status = status;
 
                     if (!HttpStatus.hasNoBody(_response._status))
                     {
