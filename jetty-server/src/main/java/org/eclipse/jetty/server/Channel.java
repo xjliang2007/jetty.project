@@ -349,7 +349,7 @@ public class Channel extends AttributesMap
             }
             catch (Exception e)
             {
-                e.printStackTrace();
+                LOG.warn("failed", e);
             }
         }
 
@@ -483,14 +483,17 @@ public class Channel extends AttributesMap
             boolean error;
             try (AutoLock ignored = _lock.lock())
             {
-                if (_onContentAvailable != null && _onContentAvailable != onContentAvailable)
-                    throw new IllegalArgumentException();
-                _onContentAvailable = onContentAvailable;
                 error = _error != null;
+                if (!error)
+                {
+                    if (_onContentAvailable != null && _onContentAvailable != onContentAvailable)
+                        throw new IllegalArgumentException("Demand pending");
+                    _onContentAvailable = onContentAvailable;
+                }
             }
 
             if (error)
-                _serializedExecutor.execute(Channel.this.onContentAvailable());
+                _serializedExecutor.execute(onContentAvailable);
             else
                 getStream().demandContent();
         }
@@ -632,7 +635,7 @@ public class Channel extends AttributesMap
                         reason = bme.getReason();
                     }
                     if (reason == null)
-                        reason = HttpStatus.getMessage(_response._status);
+                        reason = HttpStatus.getMessage(status);
 
                     _response._headers.recycle();
                     _response._status = status;
@@ -640,7 +643,7 @@ public class Channel extends AttributesMap
                     if (!HttpStatus.hasNoBody(_response._status))
                     {
                         _response.getHeaders().put(HttpHeader.CONTENT_TYPE, MimeTypes.Type.TEXT_HTML_8859_1.asString());
-                        content = BufferUtil.toBuffer("<h1>Bad Message " + _response._status + "</h1><pre>reason: " + reason + "</pre>");
+                        content = BufferUtil.toBuffer("<h1>Bad Message " + _response._status + "</h1>\n<pre>reason: " + reason + "</pre>");
                         _response._written = content.remaining();
                         commit = _response.commitResponse(true);
                     }

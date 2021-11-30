@@ -111,7 +111,7 @@ public class SharedBlockingCallback
      * callback do not blocak, rather they wakeup the thread that is blocked
      * in {@link #block()}
      */
-    public class Blocker implements Callback, Closeable
+    public class Blocker implements Callback, Closeable, Runnable
     {
         private Throwable _state = IDLE;
 
@@ -123,6 +123,12 @@ public class SharedBlockingCallback
         public InvocationType getInvocationType()
         {
             return InvocationType.NON_BLOCKING;
+        }
+
+        @Override
+        public void run()
+        {
+            succeeded();
         }
 
         @Override
@@ -223,7 +229,12 @@ public class SharedBlockingCallback
             catch (final InterruptedException e)
             {
                 _state = e;
-                throw new InterruptedIOException();
+                throw new InterruptedIOException()
+                {
+                    {
+                        initCause(e);
+                    }
+                };
             }
             finally
             {

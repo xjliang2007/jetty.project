@@ -372,7 +372,7 @@ public class ChannelTest
         MetaData.Request request = new MetaData.Request("GET", HttpURI.from("http://localhost/"), HttpVersion.HTTP_1_1, fields, 0);
         Runnable task = channel.onRequest(request);
 
-        try (StacklessLogging ignored = new StacklessLogging(Handler.class))
+        try (StacklessLogging ignored = new StacklessLogging(Server.class))
         {
             task.run();
         }
@@ -413,7 +413,7 @@ public class ChannelTest
         MetaData.Request request = new MetaData.Request("GET", HttpURI.from("http://localhost/"), HttpVersion.HTTP_1_1, fields, 0);
         Runnable task = channel.onRequest(request);
 
-        try (StacklessLogging ignored = new StacklessLogging(Handler.class))
+        try (StacklessLogging ignored = new StacklessLogging(Server.class))
         {
             task.run();
         }
@@ -483,7 +483,9 @@ public class ChannelTest
         assertThat(stream.isComplete(), is(true));
         assertThat(stream.getFailure(), notNullValue());
         assertThat(stream.getFailure().getMessage(), containsString("content-length 10 > 5"));
-        assertThat(stream.getResponse(), nullValue());
+        assertThat(stream.getResponse(), notNullValue());
+        assertThat(stream.getResponse().getStatus(), is(500));
+        assertThat(stream.getResponseContentAsString(), containsString("IOException: content-length 10 > 5"));
     }
 
     @Test
@@ -515,6 +517,7 @@ public class ChannelTest
         assertThat(stream.getFailure(), notNullValue());
         assertThat(stream.getFailure().getMessage(), containsString("content-length 10 > 5"));
         assertThat(stream.getResponse(), notNullValue());
+        assertThat(stream.getResponse().getStatus(), is(200));
     }
 
     @Test
@@ -545,7 +548,9 @@ public class ChannelTest
         assertThat(stream.isComplete(), is(true));
         assertThat(stream.getFailure(), notNullValue());
         assertThat(stream.getFailure().getMessage(), containsString("content-length 5 < 10"));
-        assertThat(stream.getResponse(), nullValue());
+        assertThat(stream.getResponse(), notNullValue());
+        assertThat(stream.getResponse().getStatus(), is(500));
+        assertThat(stream.getResponseContentAsString(), containsString("IOException: content-length 5 < 10"));
     }
 
     @Test

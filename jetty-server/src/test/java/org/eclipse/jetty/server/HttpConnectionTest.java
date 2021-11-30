@@ -216,7 +216,7 @@ public class HttpConnectionTest
         String response = connector.getResponse(request);
         assertThat(response, containsString(" 400 Bad Request"));
         assertThat(response, containsString("Connection: close"));
-        assertThat(response, containsString("reason: early EOF"));
+        assertThat(response, containsString("reason: Early EOF"));
     }
 
     public static Stream<int[]> contentLengths()
@@ -1015,7 +1015,7 @@ public class HttpConnectionTest
             "\r\n" +
             "abcdefghij\r\n";
 
-        try (StacklessLogging ignored = new StacklessLogging(Handler.class))
+        try (StacklessLogging ignored = new StacklessLogging(Server.class))
         {
             LOG.info("EXPECTING: java.lang.IllegalStateException...");
             String response = connector.getResponse(requests);

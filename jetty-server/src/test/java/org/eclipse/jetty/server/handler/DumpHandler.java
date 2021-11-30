@@ -96,7 +96,7 @@ public class DumpHandler extends Handler.Blocking
                     {
                         try (Blocker blocker = _blocker.acquire())
                         {
-                            request.demandContent(blocker::succeeded);
+                            request.demandContent(blocker);
                             blocker.block();
                         }
                         continue;
@@ -188,7 +188,7 @@ public class DumpHandler extends Handler.Blocking
                     {
                         try (Blocker blocker = _blocker.acquire())
                         {
-                            request.demandContent(blocker::succeeded);
+                            request.demandContent(blocker);
                             blocker.block();
                         }
                         continue;
