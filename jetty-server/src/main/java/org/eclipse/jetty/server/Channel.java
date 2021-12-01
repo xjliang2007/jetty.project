@@ -20,6 +20,7 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 
 import org.eclipse.jetty.http.BadMessageException;
+import org.eclipse.jetty.http.HttpField;
 import org.eclipse.jetty.http.HttpFields;
 import org.eclipse.jetty.http.HttpHeader;
 import org.eclipse.jetty.http.HttpMethod;
@@ -27,6 +28,7 @@ import org.eclipse.jetty.http.HttpStatus;
 import org.eclipse.jetty.http.HttpURI;
 import org.eclipse.jetty.http.MetaData;
 import org.eclipse.jetty.http.MimeTypes;
+import org.eclipse.jetty.http.PreEncodedHttpField;
 import org.eclipse.jetty.http.UriCompliance;
 import org.eclipse.jetty.io.Connection;
 import org.eclipse.jetty.util.AttributesMap;
@@ -53,6 +55,20 @@ public class Channel extends AttributesMap
     private static final Logger LOG = LoggerFactory.getLogger(AbstractConnector.class);
 
     public static final String UPGRADE_CONNECTION_ATTRIBUTE = Channel.class.getName() + ".UPGRADE";
+    private static final HttpField CONTENT_LENGTH_0 = new PreEncodedHttpField(HttpHeader.CONTENT_LENGTH, "0")
+    {
+        @Override
+        public int getIntValue()
+        {
+            return 0;
+        }
+
+        @Override
+        public long getLongValue()
+        {
+            return 0L;
+        }
+    };
 
     private final AutoLock _lock = new AutoLock();
     private final Runnable _handle = new RunHandle();
@@ -904,7 +920,10 @@ public class Channel extends AttributesMap
             if (last && _contentLength < 0L)
             {
                 _contentLength = _written;
-                _headers.putLongField(HttpHeader.CONTENT_LENGTH, _contentLength);
+                if (_contentLength == 0)
+                    _headers.put(CONTENT_LENGTH_0);
+                else
+                    _headers.putLongField(HttpHeader.CONTENT_LENGTH, _contentLength);
             }
 
             // Add the date header

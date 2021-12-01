@@ -26,7 +26,6 @@ import org.eclipse.jetty.http.HttpHeaderValue;
 
 class ResponseHttpFields extends HttpFields.Mutable
 {
-    // TODO remember original fields for reset;
     private boolean _readOnly;
 
     HttpFields toReadOnly()

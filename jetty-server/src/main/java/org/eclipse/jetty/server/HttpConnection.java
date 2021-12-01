@@ -40,7 +40,6 @@ import org.eclipse.jetty.http.HttpStatus;
 import org.eclipse.jetty.http.HttpURI;
 import org.eclipse.jetty.http.HttpVersion;
 import org.eclipse.jetty.http.MetaData;
-import org.eclipse.jetty.http.PreEncodedHttpField;
 import org.eclipse.jetty.http.UriCompliance;
 import org.eclipse.jetty.io.AbstractConnection;
 import org.eclipse.jetty.io.ByteBufferPool;
@@ -69,8 +68,6 @@ import static org.eclipse.jetty.http.HttpStatus.INTERNAL_SERVER_ERROR_500;
 public class HttpConnection extends AbstractConnection implements Runnable, WriteFlusher.Listener, Connection.UpgradeFrom, Connection.UpgradeTo, ConnectionMetaData
 {
     private static final Logger LOG = LoggerFactory.getLogger(HttpConnection.class);
-    public static final HttpField CONNECTION_CLOSE = new PreEncodedHttpField(HttpHeader.CONNECTION, HttpHeaderValue.CLOSE.asString());
-    public static final HttpField CONNECTION_KEEP_ALIVE = new PreEncodedHttpField(HttpHeader.CONNECTION, HttpHeaderValue.KEEP_ALIVE.asString());
     private static final ThreadLocal<HttpConnection> __currentConnection = new ThreadLocal<>();
 
     private final HttpConfiguration _configuration;
@@ -1138,8 +1135,8 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
                         _connectionKeepAlive &&
                         !_connectionClose ||
                         HttpMethod.CONNECT.is(_method);
-
                     if (persistent)
+                        // TODO remove the need to set this header here
                         _channel.getResponse().getHeaders().add(HttpHeader.CONNECTION, HttpHeaderValue.KEEP_ALIVE);
                     else
                         _generator.setPersistent(false);
@@ -1160,10 +1157,7 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
                         HttpMethod.CONNECT.is(_method);
 
                     if (!persistent)
-                    {
                         _generator.setPersistent(false);
-                        _channel.getResponse().getHeaders().add(HttpHeader.CONNECTION, HttpHeaderValue.CLOSE);
-                    }
 
                     if (_upgrade != null && HttpConnection.this.upgrade())
                         return null; // TODO ???
