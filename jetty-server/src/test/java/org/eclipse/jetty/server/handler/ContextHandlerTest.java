@@ -42,7 +42,6 @@ import org.eclipse.jetty.server.Response;
 import org.eclipse.jetty.server.Server;
 import org.eclipse.jetty.util.BufferUtil;
 import org.eclipse.jetty.util.Callback;
-import org.eclipse.jetty.util.thread.Invocable;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -254,16 +253,10 @@ public class ContextHandlerTest
     {
         CountDownLatch blocking = new CountDownLatch(1);
 
-        Handler handler = new Handler.Blocking()
+        Handler handler = new Handler.Abstract()
         {
             @Override
-            protected boolean accept(Request request)
-            {
-                return true;
-            }
-
-            @Override
-            public void blocking(Request request, Response response) throws Exception
+            public boolean handle(Request request, Response response) throws Exception
             {
                 request.addCompletionListener(Callback.from(() -> assertInContext(request)));
 
@@ -283,6 +276,7 @@ public class ContextHandlerTest
                 content.release();
                 response.setStatus(200);
                 request.succeeded();
+                return true;
             }
         };
         _contextHandler.setHandler(handler);
@@ -295,7 +289,7 @@ public class ContextHandlerTest
         HttpFields fields = HttpFields.build().add(HttpHeader.HOST, "localhost").asImmutable();
         MetaData.Request request = new MetaData.Request("POST", HttpURI.from("http://localhost/ctx/path"), HttpVersion.HTTP_1_1, fields, 0);
         Runnable todo = channel.onRequest(request);
-        Invocable.invokeNonBlocking(todo);
+        new Thread(todo).start();
         assertTrue(blocking.await(5, TimeUnit.SECONDS));
 
         stream.addContent(BufferUtil.toBuffer("Hello"), true).run();

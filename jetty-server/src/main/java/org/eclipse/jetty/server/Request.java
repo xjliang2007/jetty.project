@@ -13,6 +13,7 @@
 
 package org.eclipse.jetty.server;
 
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
 import java.util.concurrent.Executor;
@@ -23,8 +24,11 @@ import org.eclipse.jetty.http.HttpFields;
 import org.eclipse.jetty.http.HttpURI;
 import org.eclipse.jetty.util.Attributes;
 import org.eclipse.jetty.util.Callback;
+import org.eclipse.jetty.util.MultiMap;
+import org.eclipse.jetty.util.StringUtil;
+import org.eclipse.jetty.util.UrlEncoded;
 
-public interface Request extends Attributes, Callback, Executor
+public interface Request extends Attributes, Callback, Executor, Content.Provider
 {
     String getId();
 
@@ -49,8 +53,10 @@ public interface Request extends Attributes, Callback, Executor
 
     long getContentLength();
 
+    @Override
     Content readContent();
 
+    @Override
     void demandContent(Runnable onContentAvailable);
 
     void addErrorListener(Consumer<Throwable> onError);
@@ -65,6 +71,71 @@ public interface Request extends Attributes, Callback, Executor
     Request getWrapper();
 
     void setWrapper(Request request);
+
+    // TODO probably inline this once all converted or replace with safer convenience method
+    @Deprecated
+    default String getLocalAddr()
+    {
+        SocketAddress local = getConnectionMetaData().getLocal();
+        if (local instanceof InetSocketAddress)
+        {
+            InetAddress address = ((InetSocketAddress)local).getAddress();
+            String result = address == null
+                ? ((InetSocketAddress)local).getHostString()
+                : address.getHostAddress();
+
+            return getChannel().formatAddrOrHost(result);
+        }
+        return local.toString();
+    }
+
+    // TODO probably inline this once all converted or replace with safer convenience method
+    @Deprecated
+    default int getLocalPort()
+    {
+        SocketAddress local = getConnectionMetaData().getLocal();
+        if (local instanceof InetSocketAddress)
+            return ((InetSocketAddress)local).getPort();
+        return -1;
+    }
+
+    // TODO probably inline this once all converted or replace with safer convenience method
+    @Deprecated
+    default String getRemoteAddr()
+    {
+        SocketAddress remote = getConnectionMetaData().getRemote();
+        if (remote instanceof InetSocketAddress)
+        {
+            InetAddress address = ((InetSocketAddress)remote).getAddress();
+            String result = address == null
+                ? ((InetSocketAddress)remote).getHostString()
+                : address.getHostAddress();
+
+            return getChannel().formatAddrOrHost(result);
+        }
+        return remote.toString();
+    }
+
+    // TODO probably inline this once all converted or replace with safer convenience method
+    @Deprecated
+    default int getRemotePort()
+    {
+        SocketAddress remote = getConnectionMetaData().getRemote();
+        if (remote instanceof InetSocketAddress)
+            return ((InetSocketAddress)remote).getPort();
+        return -1;
+    }
+
+    // TODO review
+    @Deprecated
+    default MultiMap<String> getQueryParameters()
+    {
+        MultiMap<String> params = new MultiMap<>();
+        String query = getHttpURI().getQuery();
+        if (StringUtil.isNotBlank(query))
+            UrlEncoded.decodeUtf8To(query, params);
+        return params;
+    }
 
     default Request unwrap()
     {

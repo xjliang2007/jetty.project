@@ -16,9 +16,13 @@ package org.eclipse.jetty.server;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.Objects;
+import java.util.concurrent.ExecutionException;
 
 import org.eclipse.jetty.http.HttpFields;
 import org.eclipse.jetty.util.BufferUtil;
+import org.eclipse.jetty.util.IO;
+import org.eclipse.jetty.util.Promise;
+import org.eclipse.jetty.util.Utf8StringBuilder;
 
 /**
  * The Content abstract is based on what is already used in several places.
@@ -223,6 +227,62 @@ public interface Content
         public String toString()
         {
             return "TRAILERS";
+        }
+    }
+
+    interface Provider
+    {
+        Content readContent();
+
+        void demandContent(Runnable onContentAvailable);
+    }
+
+    static void readUtf8String(Provider provider, Promise<String> content)
+    {
+        Utf8StringBuilder builder = new Utf8StringBuilder();
+        Runnable onDataAvailable = new Runnable()
+        {
+            @Override
+            public void run()
+            {
+                while (true)
+                {
+                    Content c = provider.readContent();
+                    if (c == null)
+                    {
+                        provider.demandContent(this);
+                        return;
+                    }
+                    if (c.hasRemaining())
+                    {
+                        builder.append(c.getByteBuffer());
+                        c.release();
+                    }
+                    if (c.isLast())
+                    {
+                        if (c instanceof Content.Error)
+                            content.failed(((Content.Error)c).getCause());
+                        else
+                            content.succeeded(builder.toString());
+                        return;
+                    }
+                }
+            }
+        };
+        onDataAvailable.run();
+    }
+
+    static String readUtf8String(Provider provider) throws InterruptedException, IOException
+    {
+        Promise.Completable<String> result = new Promise.Completable<>();
+        readUtf8String(provider, result);
+        try
+        {
+            return result.get();
+        }
+        catch (ExecutionException e)
+        {
+            throw IO.rethrow(e.getCause());
         }
     }
 }

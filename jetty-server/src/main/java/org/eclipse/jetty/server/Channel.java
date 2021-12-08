@@ -52,7 +52,7 @@ import org.slf4j.LoggerFactory;
  */
 public class Channel extends AttributesMap
 {
-    private static final Logger LOG = LoggerFactory.getLogger(AbstractConnector.class);
+    private static final Logger LOG = LoggerFactory.getLogger(Channel.class);
 
     public static final String UPGRADE_CONNECTION_ATTRIBUTE = Channel.class.getName() + ".UPGRADE";
     private static final HttpField CONTENT_LENGTH_0 = new PreEncodedHttpField(HttpHeader.CONTENT_LENGTH, "0")
@@ -151,8 +151,7 @@ public class Channel extends AttributesMap
     /**
      * Start request handling by returning a Runnable that will call {@link Server#handle(Request, Response)}.
      * @param request The request metadata to handle.
-     * @return A Runnable that will call {@link Server#handle(Request, Response)}.  This Runnable may block if
-     * {@link Invocable#isNonBlockingInvocation()} returns false in the calling context.  Unlike all other Runnables
+     * @return A Runnable that will call {@link Server#handle(Request, Response)}.  Unlike all other Runnables
      * returned by {@link Channel} methods, this runnable is not mutually excluded or serialized against the other
      * Runnables.
      */
@@ -353,26 +352,30 @@ public class Channel extends AttributesMap
         }
     }
 
-    private class RunHandle implements Runnable, Invocable
+    private class RunHandle implements Runnable
     {
         @Override
         public void run()
         {
             try
             {
-                if (!_server.handle(_request, _request._response))
+                Request request = _request;
+                Response response = _request._response;
+                for (HttpConfiguration.Customizer customizer : _configuration.getCustomizers())
+                {
+                    Request customized = customizer.customize(getConnector(), _configuration, request);
+                    request = customized == null ? request : customized;
+                    if (_stream.isComplete())
+                        return;
+                }
+
+                if (!_server.handle(request, response))
                     throw new IllegalStateException();
             }
             catch (Exception e)
             {
                 LOG.warn("failed", e);
             }
-        }
-
-        @Override
-        public InvocationType getInvocationType()
-        {
-            return InvocationType.EITHER;
         }
     }
 
@@ -426,6 +429,22 @@ public class Channel extends AttributesMap
                     throw new IllegalStateException();
                 return _stream;
             }
+        }
+
+        @Override
+        public Object getAttribute(String name)
+        {
+            if (name.startsWith("org.eclipse.jetty"))
+            {
+                if (Server.class.getName().equals(name))
+                    return getServer();
+                if (Channel.class.getName().equals(name))
+                    return Channel.this;
+                if (HttpConnection.class.getName().equals(name) &&
+                    getConnectionMetaData().getConnection() instanceof HttpConnection)
+                    return getConnectionMetaData().getConnection();
+            }
+            return super.getAttribute(name);
         }
 
         @Override
@@ -701,6 +720,12 @@ public class Channel extends AttributesMap
         {
             return getStream().getInvocationType();
         }
+
+        @Override
+        public String toString()
+        {
+            return String.format("%s@%x %s %s", getMethod(), hashCode(), getHttpURI(), _metaData.getHttpVersion());
+        }
     }
 
     private class ChannelResponse implements Response, Callback
@@ -836,6 +861,8 @@ public class Channel extends AttributesMap
                 callback = _onWriteComplete;
                 _onWriteComplete = null;
             }
+            if (LOG.isDebugEnabled())
+                LOG.debug("write succeeded {}", callback);
             if (callback != null)
                 callback.succeeded();
         }
@@ -850,6 +877,8 @@ public class Channel extends AttributesMap
                 callback = _onWriteComplete;
                 _onWriteComplete = null;
             }
+            if (LOG.isDebugEnabled())
+                LOG.debug("write failed {}", callback, x);
             if (callback != null)
                 callback.failed(x);
         }
@@ -865,7 +894,10 @@ public class Channel extends AttributesMap
 
         private void fail(Callback callback, String reason, Object... args)
         {
-            IOException failure = new IOException(String.format(reason, args));
+            String message = String.format(reason, args);
+            if (LOG.isDebugEnabled())
+                LOG.debug("fail {} {}", callback, message);
+            IOException failure = new IOException(message);
             if (callback != null)
                 callback.failed(failure);
             if (!getRequest().isComplete())

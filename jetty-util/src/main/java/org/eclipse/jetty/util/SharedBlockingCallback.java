@@ -283,7 +283,7 @@ public class SharedBlockingCallback
             _lock.lock();
             try
             {
-                return String.format("%s@%x{%s}", Blocker.class.getSimpleName(), hashCode(), _state);
+                return String.format("%s@%x{%s}", Blocker.class.getSimpleName(), hashCode(), _state == null ? "WAIT" : _state);
             }
             finally
             {

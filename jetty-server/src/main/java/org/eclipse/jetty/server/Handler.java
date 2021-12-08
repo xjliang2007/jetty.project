@@ -294,6 +294,28 @@ public interface Handler extends LifeCycle, Destroyable
         }
     }
 
+    // TODO review
+    @Deprecated
+    class HotSwap extends Wrapper
+    {
+        volatile Handler _hotHandler;
+
+        @Override
+        public Handler getHandler()
+        {
+            return _hotHandler;
+        }
+
+        @Override
+        public void setHandler(Handler handler)
+        {
+            super.setHandler(handler);
+            if (isStarted())
+                LifeCycle.start(handler);
+            _hotHandler = handler;
+        }
+    }
+
     /**
      * A Handler Container that wraps a list of other Handlers.
      * By default, each handler is called in turn until one returns true from {@link Handler#handle(Request, Response)}.
@@ -373,41 +395,5 @@ public interface Handler extends LifeCycle, Destroyable
             if (list.remove(handler))
                 setHandlers(list);
         }
-    }
-
-    abstract class Blocking extends Abstract
-    {
-        protected boolean accept(Request request)
-        {
-            return isStarted();
-        }
-
-        @Override
-        public boolean handle(Request request, Response response) throws Exception
-        {
-            if (!accept(request))
-                return false;
-            if (Invocable.isNonBlockingInvocation())
-            {
-                request.execute(() ->
-                {
-                    try
-                    {
-                        blocking(request, response);
-                    }
-                    catch (Throwable t)
-                    {
-                        request.failed(t);
-                    }
-                });
-            }
-            else
-            {
-                blocking(request, response);
-            }
-            return true;
-        }
-
-        protected abstract void blocking(Request request, Response response) throws Exception;
     }
 }

@@ -389,18 +389,16 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
                         break;
                     }
                 }
-
-                if (filled < 0)
+                else if (filled < 0)
                 {
                     getEndPoint().shutdownOutput();
                     break;
                 }
-                if (filled == 0)
+                else if (filled == 0)
                 {
                     fillInterested();
                     break;
                 }
-
             }
         }
         catch (Throwable x)
@@ -1348,6 +1346,8 @@ public class HttpConnection extends AbstractConnection implements Runnable, Writ
             // if we are not called from the onfillable thread, schedule completion
             if (getCurrentConnection() != HttpConnection.this)
             {
+                if (LOG.isDebugEnabled())
+                    LOG.debug("non-current completion {}", this);
                 // If we are looking for the next request
                 if (_parser.isStart())
                 {

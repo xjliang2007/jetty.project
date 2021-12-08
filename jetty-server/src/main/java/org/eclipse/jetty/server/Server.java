@@ -591,8 +591,11 @@ public class Server extends Handler.Wrapper implements Attributes
                 scheme = "https";
 
             String host = connector.getHost();
-            String path = "/";
+            if (host == null)
+                host = InetAddress.getLocalHost().getHostAddress();
+            int port = connector.getLocalPort();
 
+            String path = "/";
             if (context != null)
             {
                 Optional<String> vhost = context.getVirtualHosts().stream()
@@ -605,12 +608,10 @@ public class Server extends Handler.Wrapper implements Attributes
                     if (at > 0)
                         host = host.substring(0, at);
                 }
-                if (host == null)
-                    host = InetAddress.getLocalHost().getHostAddress();
 
                 path = context.getContextPath();
             }
-            return new URI(scheme, null, host, connector.getLocalPort(), path, null, null);
+            return new URI(scheme, null, host, port, path, null, null);
         }
         catch (Exception e)
         {

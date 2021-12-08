@@ -39,7 +39,6 @@ import org.eclipse.jetty.server.handler.HelloHandler;
 import org.eclipse.jetty.util.BufferUtil;
 import org.eclipse.jetty.util.Callback;
 import org.eclipse.jetty.util.FuturePromise;
-import org.eclipse.jetty.util.thread.Invocable;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -153,7 +152,7 @@ public class ChannelTest
         MetaData.Request request = new MetaData.Request("POST", HttpURI.from("http://localhost/?read=10"), HttpVersion.HTTP_1_1, fields, 0);
 
         Runnable todo = channel.onRequest(request);
-        Invocable.invokeNonBlocking(todo); // handling will block for content, but not in this call
+        new Thread(todo).start(); // handling will block for content
 
         assertNull(stream.addContent("01234567890", true));
 

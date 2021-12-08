@@ -40,7 +40,7 @@ import org.slf4j.LoggerFactory;
  * Dumps GET and POST requests.
  * Useful for testing and debugging.
  */
-public class DumpHandler extends Handler.Blocking
+public class DumpHandler extends Handler.Abstract
 {
     private static final Logger LOG = LoggerFactory.getLogger(DumpHandler.class);
 
@@ -57,8 +57,10 @@ public class DumpHandler extends Handler.Blocking
     }
 
     @Override
-    protected void blocking(Request request, Response response) throws Exception
+    public boolean handle(Request request, Response response) throws Exception
     {
+        if (LOG.isDebugEnabled())
+            LOG.debug("dump {}", request);
         HttpURI httpURI = request.getHttpURI();
 
         MultiMap<String> params = UrlEncoded.decodeQuery(httpURI.getQuery());
@@ -76,7 +78,7 @@ public class DumpHandler extends Handler.Blocking
         {
             response.setStatus(200);
             request.succeeded();
-            return;
+            return true;
         }
 
         Utf8StringBuilder read = null;
@@ -106,7 +108,7 @@ public class DumpHandler extends Handler.Blocking
                 if (content instanceof Content.Error)
                 {
                     request.failed(((Content.Error)content).getCause());
-                    return;
+                    return true;
                 }
 
                 int l = Math.min(buffer.length, Math.min(len, content.remaining()));
@@ -135,7 +137,7 @@ public class DumpHandler extends Handler.Blocking
         {
             response.setStatus(Integer.parseInt(params.getValue("error")));
             request.succeeded();
-            return;
+            return true;
         }
 
         response.setContentType(MimeTypes.Type.TEXT_HTML.asString());
@@ -147,8 +149,8 @@ public class DumpHandler extends Handler.Blocking
         writer.write("<pre>path=" + request.getPath() + "</pre><br/>\n");
         writer.write("<pre>contentType=" + request.getHeaders().get(HttpHeader.CONTENT_TYPE) + "</pre><br/>\n");
         writer.write("<pre>servername=" + Request.getServerName(request) + "</pre><br/>\n");
-        writer.write("<pre>local=" + request.getConnectionMetaData().getLocal() + "</pre><br/>\n");
-        writer.write("<pre>remote=" + request.getConnectionMetaData().getRemote() + "</pre><br/>\n");
+        writer.write("<pre>local=" + request.getLocalAddr() + ":" + request.getLocalPort() + "</pre><br/>\n");
+        writer.write("<pre>remote=" + request.getRemoteAddr() + ":" + request.getRemotePort() + "</pre><br/>\n");
         writer.write("<h3>Header:</h3><pre>");
         writer.write(String.format("%4s %s %s\n", request.getMethod(), httpURI.getPathQuery(), request.getConnectionMetaData().getProtocol()));
         Enumeration<String> headers = request.getHeaders().getFieldNames();
@@ -172,50 +174,10 @@ public class DumpHandler extends Handler.Blocking
         }
 
         writer.write("</pre>\n<h3>Content:</h3>\n<pre>");
-
-        if (read == null)
-        {
-            read = new Utf8StringBuilder();
-            byte[] buffer = new byte[8192];
-
-            Content content = null;
-            while (true)
-            {
-                if (content == null)
-                {
-                    content = request.readContent();
-                    if (content == null)
-                    {
-                        try (Blocker blocker = _blocker.acquire())
-                        {
-                            request.demandContent(blocker);
-                            blocker.block();
-                        }
-                        continue;
-                    }
-                }
-
-                if (content instanceof Content.Error)
-                {
-                    request.failed(((Content.Error)content).getCause());
-                    return;
-                }
-
-                int l = Math.min(buffer.length, content.remaining());
-                content.fill(buffer, 0, l);
-                read.append(buffer, 0, l);
-
-                if (content.isEmpty())
-                {
-                    content.release();
-                    if (content.isLast())
-                        break;
-                    if (!content.isSpecial())
-                        content = null;
-                }
-            }
-        }
-        writer.write(read.toString());
+        if (read != null)
+            writer.write(read.toString());
+        else
+            writer.write(Content.readUtf8String(request));
 
         writer.write("</pre>\n");
         writer.write("</html>\n");
@@ -246,6 +208,6 @@ public class DumpHandler extends Handler.Blocking
         }
 
         request.succeeded();
-
+        return true;
     }
 }

@@ -14,6 +14,7 @@
 package org.eclipse.jetty.server;
 
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 
 import org.eclipse.jetty.http.HttpFields;
 import org.eclipse.jetty.http.HttpHeader;
@@ -41,6 +42,11 @@ public interface Response
     HttpFields.Mutable getTrailers();
 
     void write(boolean last, Callback callback, ByteBuffer... content);
+
+    default void write(boolean last, Callback callback, String utf8Content)
+    {
+        write(last, callback, BufferUtil.toBuffer(utf8Content, StandardCharsets.UTF_8));
+    }
 
     void push(MetaData.Request request);
 
