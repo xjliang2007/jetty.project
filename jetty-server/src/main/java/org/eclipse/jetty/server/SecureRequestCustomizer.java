@@ -16,6 +16,7 @@ package org.eclipse.jetty.server;
 import java.security.cert.Certificate;
 import java.security.cert.X509Certificate;
 import java.util.HashSet;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import javax.net.ssl.SSLContext;
@@ -48,7 +49,8 @@ public class SecureRequestCustomizer implements HttpConfiguration.Customizer
 {
     private static final Logger LOG = LoggerFactory.getLogger(SecureRequestCustomizer.class);
     public static final String X509_CERT = "org.eclipse.jetty.server.x509_cert";
-    private String _sslSessionAttribute = "org.eclipse.jetty.servlet.request.ssl_session";
+    private String _sslSessionAttribute = "org.eclipse.jetty.servlet.request.ssl_session"; // TODO better name?
+    private String _sslSessionDataAttribute = _sslSessionAttribute + "_data"; // TODO better name?
 
     private boolean _sniRequired;
     private boolean _sniHostCheck;
@@ -244,7 +246,9 @@ public class SecureRequestCustomizer implements HttpConfiguration.Customizer
 
     public void setSslSessionAttribute(String attribute)
     {
+        Objects.requireNonNull(attribute);
         _sslSessionAttribute = attribute;
+        _sslSessionDataAttribute = attribute + "_data";
     }
 
     public String getSslSessionAttribute()
@@ -257,7 +261,7 @@ public class SecureRequestCustomizer implements HttpConfiguration.Customizer
      *
      * @return the SslSessionData
      */
-    public  SslSessionData getSslSessionData(SSLSession session)
+    public static SslSessionData getSslSessionData(SSLSession session)
     {
         String key = SslSessionData.class.getName();
         return (SslSessionData)session.getValue(key);
@@ -278,7 +282,7 @@ public class SecureRequestCustomizer implements HttpConfiguration.Customizer
                 x509 = new X509(null, (X509Certificate)certificates[0]);
                 session.putValue(X509_CERT, x509);
             }
-            String serverName = Request.getServerName(request);
+            String serverName = request.getServerName();
             if (LOG.isDebugEnabled())
                 LOG.debug("Host={}, SNI={}, SNI Certificate={}", serverName, sniHost, x509);
 
@@ -299,7 +303,8 @@ public class SecureRequestCustomizer implements HttpConfiguration.Customizer
     protected class SecureRequest extends Request.Wrapper
     {
         private final HttpURI _uri;
-        private final SSLSession _session;
+        private final SSLSession _sslSession;
+        private final SslSessionData _sslSessionData;
 
         private SecureRequest(Request request, HttpURI uri, SSLEngine sslEngine)
         {
@@ -308,35 +313,37 @@ public class SecureRequestCustomizer implements HttpConfiguration.Customizer
 
             if (sslEngine == null)
             {
-                _session = null;
+                _sslSession = null;
+                _sslSessionData = null;
             }
             else
             {
-                _session = sslEngine.getSession();
-                checkSni(request, _session);
+                _sslSession = sslEngine.getSession();
+                checkSni(request, _sslSession);
 
                 String key = SslSessionData.class.getName();
-                SslSessionData sslSessionData = (SslSessionData)_session.getValue(key);
+                SslSessionData sslSessionData = (SslSessionData)_sslSession.getValue(key);
                 if (sslSessionData == null)
                 {
                     try
                     {
-                        String cipherSuite = _session.getCipherSuite();
+                        String cipherSuite = _sslSession.getCipherSuite();
                         int keySize = SslContextFactory.deduceKeyLength(cipherSuite);
 
-                        X509Certificate[] certs = getCertChain(getChannel().getConnector(), _session);
+                        X509Certificate[] certs = getCertChain(getChannel().getConnector(), _sslSession);
 
-                        byte[] bytes = _session.getId();
+                        byte[] bytes = _sslSession.getId();
                         String idStr = TypeUtil.toHexString(bytes);
 
                         sslSessionData = new SslSessionData(keySize, certs, idStr);
-                        _session.putValue(key, sslSessionData);
+                        _sslSession.putValue(key, sslSessionData);
                     }
                     catch (Exception e)
                     {
                         LOG.warn("Unable to get secure details ", e);
                     }
                 }
+                _sslSessionData = sslSessionData;
             }
         }
 
@@ -356,8 +363,13 @@ public class SecureRequestCustomizer implements HttpConfiguration.Customizer
         public Object getAttribute(String name)
         {
             String sessionAttribute = getSslSessionAttribute();
-            if (!StringUtil.isEmpty(sessionAttribute) && sessionAttribute.equals(name))
-                return _session;
+            if (StringUtil.isNotBlank(sessionAttribute) && name.startsWith(sessionAttribute))
+            {
+                if (name.equals(sessionAttribute))
+                    return _sslSession;
+                if (name.equals(_sslSessionDataAttribute))
+                    return _sslSessionData;
+            }
 
             return super.getAttribute(name);
         }
@@ -368,7 +380,10 @@ public class SecureRequestCustomizer implements HttpConfiguration.Customizer
             String sessionAttribute = getSslSessionAttribute();
             Set<String> names = new HashSet<>(_attributes.getAttributeNames());
             if (!StringUtil.isEmpty(sessionAttribute))
+            {
                 names.add(sessionAttribute);
+                names.add(sessionAttribute + "_data");
+            }
             return names;
         }
     }
@@ -389,17 +404,17 @@ public class SecureRequestCustomizer implements HttpConfiguration.Customizer
             this._idStr = idStr;
         }
 
-        private Integer getKeySize()
+        public Integer getKeySize()
         {
             return _keySize;
         }
 
-        private X509Certificate[] getCerts()
+        public X509Certificate[] getX509Certificates()
         {
             return _certs;
         }
 
-        private String getIdStr()
+        public String getId()
         {
             return _idStr;
         }

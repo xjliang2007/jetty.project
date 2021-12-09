@@ -110,6 +110,11 @@ public class Channel extends AttributesMap
         };
     }
 
+    public HttpConfiguration getHttpConfiguration()
+    {
+        return _configuration;
+    }
+
     public void setStream(Stream stream)
     {
         try (AutoLock ignored = _lock.lock())
@@ -357,25 +362,8 @@ public class Channel extends AttributesMap
         @Override
         public void run()
         {
-            try
-            {
-                Request request = _request;
-                Response response = _request._response;
-                for (HttpConfiguration.Customizer customizer : _configuration.getCustomizers())
-                {
-                    Request customized = customizer.customize(getConnector(), _configuration, request);
-                    request = customized == null ? request : customized;
-                    if (_stream.isComplete())
-                        return;
-                }
-
-                if (!_server.handle(request, response))
-                    throw new IllegalStateException();
-            }
-            catch (Exception e)
-            {
-                LOG.warn("failed", e);
-            }
+            if (!_server.handle(_request, _request._response))
+                throw new IllegalStateException();
         }
     }
 
@@ -399,9 +387,15 @@ public class Channel extends AttributesMap
         }
 
         @Override
+        public Response getResponse()
+        {
+            return _response;
+        }
+
+        @Override
         public void setWrapper(Request wrapper)
         {
-            if (_wrapper != null && wrapper.getWrapped() != _wrapper)
+            if (wrapper.getWrapped() != _wrapper)
                 throw new IllegalStateException("B B B Bad rapping!");
             _wrapper = wrapper;
         }
@@ -627,21 +621,16 @@ public class Channel extends AttributesMap
                 written = _response._written;
             }
 
-            // Commit and complete the response
-            if (contentLength >= 0L && contentLength != written)
+            // ensure the request is consumed
+            Throwable unconsumed = stream.consumeAll();
+            if (LOG.isDebugEnabled())
+                LOG.debug("consumeAll {} ", this, unconsumed);
+            if (unconsumed != null && getConnectionMetaData().isPersistent())
+                stream.failed(unconsumed);
+            else if (contentLength >= 0L && contentLength != written)
                 stream.failed(new IOException(String.format("contentLength %d != %d", contentLength, written)));
             else
-                stream.send(commit, true, Callback.from(() ->
-                {
-                    // ensure the request is consumed
-                    Throwable unconsumed = stream.consumeAll();
-                    if (LOG.isDebugEnabled())
-                        LOG.debug("consumeAll {} ", this, unconsumed);
-                    if (unconsumed != null && getConnectionMetaData().isPersistent())
-                        stream.failed(unconsumed);
-                    else
-                        stream.succeeded();
-                }, stream::failed));
+                stream.send(commit, true, stream);
         }
 
         @Override
@@ -737,7 +726,7 @@ public class Channel extends AttributesMap
         private Callback _onWriteComplete;
         private long _written;
         private long _contentLength = -1L;
-        private Response _wrapper;
+        private Response _wrapper = this;
 
         private ChannelResponse(ChannelRequest request)
         {
@@ -759,7 +748,7 @@ public class Channel extends AttributesMap
         @Override
         public void setWrapper(Response wrapper)
         {
-            if (_wrapper != null && wrapper.getWrapped() != _wrapper)
+            if (wrapper.getWrapped() != _wrapper)
                 throw new IllegalStateException("Bbb b bad rapping!");
             _wrapper = wrapper;
         }

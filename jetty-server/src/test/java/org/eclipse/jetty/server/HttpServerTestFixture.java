@@ -19,6 +19,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 
+import org.eclipse.jetty.util.BlockingCallback;
 import org.eclipse.jetty.util.BufferUtil;
 import org.eclipse.jetty.util.MultiMap;
 import org.eclipse.jetty.util.Promise;
@@ -208,7 +209,7 @@ public class HttpServerTestFixture
             response.setStatus(200);
 
             String input = Content.readUtf8String(request);
-            MultiMap<String> params = request.getQueryParameters();
+            MultiMap<String> params = request.extractQueryParameters();
 
             String tmp = params.getValue("writes");
             int writes = Integer.parseInt(tmp == null ? "10" : tmp);
@@ -226,17 +227,15 @@ public class HttpServerTestFixture
             }
 
             String chunk = (input + data).substring(0, block);
-            SharedBlockingCallback blocking = new SharedBlockingCallback();
             if (encoding == null)
             {
                 response.setContentType("text/plain");
                 ByteBuffer bytes = BufferUtil.toBuffer(chunk, StandardCharsets.ISO_8859_1);
                 for (int i = writes; i-- > 0;)
                 {
-                    try (SharedBlockingCallback.Blocker blocker = blocking.acquire())
+                    try (BlockingCallback blocker = new BlockingCallback())
                     {
-                        response.write(i == 0, blocker, bytes);
-                        blocker.block();
+                        response.write(i == 0, blocker, bytes.slice());
                     }
                 }
             }
@@ -246,13 +245,13 @@ public class HttpServerTestFixture
                 ByteBuffer bytes = BufferUtil.toBuffer(chunk, Charset.forName(encoding));
                 for (int i = writes; i-- > 0;)
                 {
-                    try (SharedBlockingCallback.Blocker blocker = blocking.acquire())
+                    try (BlockingCallback blocker = new BlockingCallback())
                     {
-                        response.write(i == 0, blocker, bytes);
-                        blocker.block();
+                        response.write(i == 0, blocker, bytes.slice());
                     }
                 }
             }
+            request.succeeded();
             return true;
         }
     }

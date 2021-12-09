@@ -63,6 +63,8 @@ public interface Request extends Attributes, Callback, Executor, Content.Provide
 
     void addCompletionListener(Callback onComplete);
 
+    Response getResponse();
+
     default Request getWrapped()
     {
         return null;
@@ -73,7 +75,6 @@ public interface Request extends Attributes, Callback, Executor, Content.Provide
     void setWrapper(Request request);
 
     // TODO probably inline this once all converted or replace with safer convenience method
-    @Deprecated
     default String getLocalAddr()
     {
         SocketAddress local = getConnectionMetaData().getLocal();
@@ -90,7 +91,6 @@ public interface Request extends Attributes, Callback, Executor, Content.Provide
     }
 
     // TODO probably inline this once all converted or replace with safer convenience method
-    @Deprecated
     default int getLocalPort()
     {
         SocketAddress local = getConnectionMetaData().getLocal();
@@ -100,7 +100,6 @@ public interface Request extends Attributes, Callback, Executor, Content.Provide
     }
 
     // TODO probably inline this once all converted or replace with safer convenience method
-    @Deprecated
     default String getRemoteAddr()
     {
         SocketAddress remote = getConnectionMetaData().getRemote();
@@ -117,7 +116,6 @@ public interface Request extends Attributes, Callback, Executor, Content.Provide
     }
 
     // TODO probably inline this once all converted or replace with safer convenience method
-    @Deprecated
     default int getRemotePort()
     {
         SocketAddress remote = getConnectionMetaData().getRemote();
@@ -127,8 +125,35 @@ public interface Request extends Attributes, Callback, Executor, Content.Provide
     }
 
     // TODO review
-    @Deprecated
-    default MultiMap<String> getQueryParameters()
+    default String getServerName()
+    {
+        HttpURI uri = getHttpURI();
+        if (uri.hasAuthority())
+            return getChannel().formatAddrOrHost(uri.getHost());
+
+        SocketAddress local = getConnectionMetaData().getLocal();
+        if (local instanceof InetSocketAddress)
+            return getChannel().formatAddrOrHost(((InetSocketAddress)local).getHostString());
+
+        return local.toString();
+    }
+
+    // TODO review
+    default int getServerPort()
+    {
+        HttpURI uri = getHttpURI();
+        if (uri.hasAuthority())
+            return uri.getPort();
+
+        SocketAddress local = getConnectionMetaData().getLocal();
+        if (local instanceof InetSocketAddress)
+            return ((InetSocketAddress)local).getPort();
+
+        return -1;
+    }
+
+    // TODO review
+    default MultiMap<String> extractQueryParameters()
     {
         MultiMap<String> params = new MultiMap<>();
         String query = getHttpURI().getQuery();
@@ -172,32 +197,6 @@ public interface Request extends Attributes, Callback, Executor, Content.Provide
             r = r.getWrapped();
         }
         return null;
-    }
-
-    static String getServerName(Request request)
-    {
-        HttpURI uri = request.getHttpURI();
-        if (uri.hasAuthority())
-            return request.getChannel().formatAddrOrHost(uri.getHost());
-
-        SocketAddress local = request.getConnectionMetaData().getLocal();
-        if (local instanceof InetSocketAddress)
-            return request.getChannel().formatAddrOrHost(((InetSocketAddress)local).getHostString());
-
-        return local.toString();
-    }
-
-    static int getServerPort(Request request)
-    {
-        HttpURI uri = request.getHttpURI();
-        if (uri.hasAuthority())
-            return uri.getPort();
-
-        SocketAddress local = request.getConnectionMetaData().getLocal();
-        if (local instanceof InetSocketAddress)
-            return ((InetSocketAddress)local).getPort();
-
-        return -1;
     }
 
     class Wrapper extends Attributes.Wrapper implements Request
@@ -299,6 +298,12 @@ public interface Request extends Attributes, Callback, Executor, Content.Provide
         public void addCompletionListener(Callback onComplete)
         {
             _wrapped.addCompletionListener(onComplete);
+        }
+
+        @Override
+        public Response getResponse()
+        {
+            return _wrapped.getResponse();
         }
 
         @Override

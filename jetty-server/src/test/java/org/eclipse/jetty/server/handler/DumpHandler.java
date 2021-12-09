@@ -148,7 +148,7 @@ public class DumpHandler extends Handler.Abstract
         writer.write("<pre>httpURI=" + httpURI + "</pre><br/>\n");
         writer.write("<pre>path=" + request.getPath() + "</pre><br/>\n");
         writer.write("<pre>contentType=" + request.getHeaders().get(HttpHeader.CONTENT_TYPE) + "</pre><br/>\n");
-        writer.write("<pre>servername=" + Request.getServerName(request) + "</pre><br/>\n");
+        writer.write("<pre>servername=" + request.getServerName() + "</pre><br/>\n");
         writer.write("<pre>local=" + request.getLocalAddr() + ":" + request.getLocalPort() + "</pre><br/>\n");
         writer.write("<pre>remote=" + request.getRemoteAddr() + ":" + request.getRemotePort() + "</pre><br/>\n");
         writer.write("<h3>Header:</h3><pre>");

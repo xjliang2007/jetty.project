@@ -45,16 +45,11 @@ public abstract class AbstractConnection implements Connection
 
     protected AbstractConnection(EndPoint endp, Executor executor)
     {
-        this(endp, executor, Invocable.InvocationType.BLOCKING);
-    }
-
-    protected AbstractConnection(EndPoint endp, Executor executor, Invocable.InvocationType onFillableInvocationType)
-    {
         if (executor == null)
             throw new IllegalArgumentException("Executor must not be null!");
         _endPoint = endp;
         _executor = executor;
-        _readCallback = new ReadCallback(onFillableInvocationType);
+        _readCallback = new ReadCallback();
     }
 
     @Override
@@ -306,25 +301,16 @@ public abstract class AbstractConnection implements Connection
     @Override
     public final String toString()
     {
-        return String.format("%s@%h::%s", getClass().getSimpleName(), this, getEndPoint());
+        return String.format("%s@%h::%s", getClass().getSimpleName(), hashCode(), getEndPoint());
     }
 
     public String toConnectionString()
     {
-        return String.format("%s@%h",
-            getClass().getSimpleName(),
-            this);
+        return String.format("%s@%h", getClass().getSimpleName(), hashCode());
     }
 
-    private class ReadCallback implements Callback, Invocable
+    private class ReadCallback implements Callback
     {
-        private final InvocationType _onFillableInvocationType;
-
-        public ReadCallback(InvocationType onFillableInvocationType)
-        {
-            _onFillableInvocationType = onFillableInvocationType;
-        }
-
         @Override
         public void succeeded()
         {
@@ -341,12 +327,6 @@ public abstract class AbstractConnection implements Connection
         public String toString()
         {
             return String.format("AC.ReadCB@%h{%s}", AbstractConnection.this, AbstractConnection.this);
-        }
-
-        @Override
-        public InvocationType getInvocationType()
-        {
-            return _onFillableInvocationType;
         }
     }
 }

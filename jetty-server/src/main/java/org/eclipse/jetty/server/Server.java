@@ -25,6 +25,7 @@ import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 
+import org.eclipse.jetty.http.BadMessageException;
 import org.eclipse.jetty.http.DateGenerator;
 import org.eclipse.jetty.http.HttpField;
 import org.eclipse.jetty.http.HttpGenerator;
@@ -118,7 +119,19 @@ public class Server extends Handler.Wrapper implements Attributes
 
         try
         {
-            if (!super.handle(request, response))
+            // Customize
+            Request customizedRequest = request;
+            HttpConfiguration configuration = request.getChannel().getHttpConfiguration();
+            for (HttpConfiguration.Customizer customizer : configuration.getCustomizers())
+            {
+                Request customized = customizer.customize(request.getConnectionMetaData().getConnector(), configuration, customizedRequest);
+                customizedRequest = customized == null ? request : customized;
+                if (request.isComplete())
+                    return true;
+            }
+
+            // Handle
+            if (!super.handle(customizedRequest, customizedRequest.getResponse()))
             {
                 if (response.isCommitted())
                 {
@@ -135,7 +148,12 @@ public class Server extends Handler.Wrapper implements Attributes
         }
         catch (Throwable t)
         {
-            LOG.warn("handle failed {}", this, t);
+            // Let's be less verbose with BadMessageExceptions
+            if (!LOG.isDebugEnabled() && t instanceof BadMessageException)
+                LOG.warn("bad message {}", t.getMessage()); // TODO be even less verbose
+            else
+                LOG.warn("handle failed {}", this, t);
+
             // TODO can this all be moved into request.failed?
             if (response.isCommitted())
             {

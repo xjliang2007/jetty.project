@@ -175,7 +175,7 @@ public interface Response
         @Override
         public Response getWrapped()
         {
-            return _wrapped.getWrapped();
+            return _wrapped;
         }
 
         @Override

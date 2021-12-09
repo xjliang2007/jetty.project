@@ -19,6 +19,7 @@ import java.util.Objects;
 import java.util.concurrent.ExecutionException;
 
 import org.eclipse.jetty.http.HttpFields;
+import org.eclipse.jetty.io.ByteBufferAccumulator;
 import org.eclipse.jetty.util.BufferUtil;
 import org.eclipse.jetty.util.IO;
 import org.eclipse.jetty.util.Promise;
@@ -37,6 +38,10 @@ public interface Content
     default boolean isSpecial()
     {
         return false;
+    }
+
+    default void checkError() throws IOException
+    {
     }
 
     default void release()
@@ -190,6 +195,12 @@ public interface Content
             _cause = cause == null ? new IOException("unknown") : cause;
         }
 
+        @Override
+        public void checkError() throws IOException
+        {
+            throw IO.rethrow(_cause);
+        }
+
         public Throwable getCause()
         {
             return _cause;
@@ -235,6 +246,57 @@ public interface Content
         Content readContent();
 
         void demandContent(Runnable onContentAvailable);
+    }
+
+    // TODO should these static methods be instance methods?   They are not very buffer efficient
+
+    static void readBytes(Provider provider, Promise<ByteBuffer> content)
+    {
+        ByteBufferAccumulator out = new ByteBufferAccumulator();
+        Runnable onDataAvailable = new Runnable()
+        {
+            @Override
+            public void run()
+            {
+                while (true)
+                {
+                    Content c = provider.readContent();
+                    if (c == null)
+                    {
+                        provider.demandContent(this);
+                        return;
+                    }
+                    if (c.hasRemaining())
+                    {
+                        out.copyBuffer(c.getByteBuffer());
+                        c.release();
+                    }
+                    if (c.isLast())
+                    {
+                        if (c instanceof Content.Error)
+                            content.failed(((Content.Error)c).getCause());
+                        else
+                            content.succeeded(out.takeByteBuffer());
+                        return;
+                    }
+                }
+            }
+        };
+        onDataAvailable.run();
+    }
+
+    static ByteBuffer readBytes(Provider provider) throws InterruptedException, IOException
+    {
+        Promise.Completable<ByteBuffer> result = new Promise.Completable<>();
+        readBytes(provider, result);
+        try
+        {
+            return result.get();
+        }
+        catch (ExecutionException e)
+        {
+            throw IO.rethrow(e.getCause());
+        }
     }
 
     static void readUtf8String(Provider provider, Promise<String> content)
