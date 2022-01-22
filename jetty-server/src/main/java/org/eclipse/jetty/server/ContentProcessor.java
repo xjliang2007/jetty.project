@@ -14,18 +14,21 @@
 package org.eclipse.jetty.server;
 
 import java.nio.channels.ReadPendingException;
-import java.util.Objects;
+import java.util.function.Consumer;
 
 import org.eclipse.jetty.util.thread.AutoLock;
 
 public abstract class ContentProcessor extends Content.Processor
 {
     private final AutoLock _lock = new AutoLock();
+    private final ProcessProducer _outputProducer = new ProcessProducer();
+    private Content.Producer _inputProducer;
     private boolean _reading;
     private boolean _iterating;
     private boolean _available;
     private Content _output;
-    private Runnable _onContentAvailable;
+    private Consumer<Content.Producer> _onContentAvailable;
+    private boolean _demanding;
 
     public ContentProcessor(Content.Provider provider)
     {
@@ -33,76 +36,104 @@ public abstract class ContentProcessor extends Content.Processor
     }
 
     @Override
-    public Content readContent()
+    public void content(Consumer<Content.Producer> onContentAvailable)
     {
-        boolean available;
         try (AutoLock ignored = _lock.lock())
         {
-            if (_reading)
-                throw new ReadPendingException();
-
-            if (_output != null)
-            {
-                Content output = _output;
-                _output = null;
-                return output;
-            }
-
-            available = _available;
-            _available = false;
-            _reading = true;
+            if (_demanding)
+                throw new IllegalStateException("Demand pending");
+            _onContentAvailable = onContentAvailable;
         }
+        onContentAvailable.accept(_outputProducer);
+    }
 
-        Content input = null;
-        try
+    private class ProcessProducer implements Content.Producer
+    {
+        @Override
+        public Content readContent()
         {
-            while (true)
-            {
-                Content output = available ? null : process(null);
-                if (output != null)
-                    return output;
-                available = false;
-                input = getProvider().readContent();
-                output = process(input);
-                if (output != null)
-                    return output;
-                if (input == null)
-                    return null;
-            }
-        }
-        catch (Throwable t)
-        {
-            return new Content.Error(t, input != null && input.isLast());
-        }
-        finally
-        {
+            boolean available;
+            Content.Producer inputProducer;
             try (AutoLock ignored = _lock.lock())
             {
-                _reading = false;
+                if (_reading)
+                    throw new ReadPendingException();
+
+                if (_output != null)
+                {
+                    Content output = _output;
+                    _output = null;
+                    return output;
+                }
+
+                if (_inputProducer == null)
+                    return null;
+                inputProducer = _inputProducer;
+
+                available = _available;
+                _available = false;
+                _reading = true;
             }
+
+            Content input = null;
+            try
+            {
+                while (true)
+                {
+                    Content output = available ? null : process(null);
+                    if (output != null)
+                        return output;
+                    available = false;
+                    input = inputProducer.readContent();
+                    output = process(input);
+                    if (output != null)
+                        return output;
+                    if (input == null)
+                        return null;
+                }
+            }
+            catch (Throwable t)
+            {
+                return new Content.Error(t, input != null && input.isLast());
+            }
+            finally
+            {
+                try (AutoLock ignored = _lock.lock())
+                {
+                    _reading = false;
+                }
+            }
+        }
+
+        @Override
+        public void demandContent()
+        {
+            iterate(null);
         }
     }
 
-    @Override
-    public void demandContent(Runnable onContentAvailable)
+    private void iterate(Content.Producer inputProducer)
     {
-        Objects.requireNonNull(onContentAvailable);
-        iterate(false, onContentAvailable);
-    }
+        boolean available = inputProducer != null;
+        Consumer<Content.Producer> onContentAvailable = null;
 
-    private void iterate(boolean available, Runnable onContentAvailable)
-    {
         try (AutoLock ignored = _lock.lock())
         {
             if (_reading)
                 throw new IllegalStateException("read pending");
 
-            if (onContentAvailable != null)
+            if (inputProducer == null)
             {
-                if (_onContentAvailable != null && onContentAvailable != _onContentAvailable)
-                    throw new IllegalStateException("demand pending");
-                _onContentAvailable = onContentAvailable;
-                onContentAvailable = null;
+                if (_inputProducer == null)
+                    return;
+                inputProducer = _inputProducer;
+                _demanding = true;
+            }
+            else
+            {
+                if (_inputProducer != null && inputProducer != _inputProducer)
+                    throw new IllegalStateException("mixed input producer?");
+                _inputProducer = inputProducer;
             }
 
             _available |= available;
@@ -118,7 +149,7 @@ public abstract class ContentProcessor extends Content.Processor
             else
             {
                 onContentAvailable = _onContentAvailable;
-                _onContentAvailable = null;
+                _demanding = false;
             }
 
             _iterating = true;
@@ -133,7 +164,7 @@ public abstract class ContentProcessor extends Content.Processor
                 Throwable error = null;
                 try
                 {
-                    onContentAvailable.run();
+                    onContentAvailable.accept(_outputProducer);
                 }
                 catch (Throwable t)
                 {
@@ -151,12 +182,12 @@ public abstract class ContentProcessor extends Content.Processor
                             _output = new Content.Error(error, false);
                         }
 
-                        if (_onContentAvailable == null)
+                        if (!_demanding)
                             _iterating = iterating = false;
                         else if (_output != null)
                         {
                             onContentAvailable = _onContentAvailable;
-                            _onContentAvailable = null;
+                            _demanding = false;
                         }
                     }
                 }
@@ -169,11 +200,11 @@ public abstract class ContentProcessor extends Content.Processor
                     output = available ? null : process(null);
                     if (output == null)
                     {
-                        input = getProvider().readContent();
+                        input = inputProducer.readContent();
                         output = process(input);
                         available = false;
                         if (output == null && input == null)
-                            getProvider().demandContent(this::onContentAvailable);
+                            inputProducer.demandContent();
                     }
                 }
                 catch (Throwable t)
@@ -216,9 +247,9 @@ public abstract class ContentProcessor extends Content.Processor
         }
     }
 
-    private void onContentAvailable()
+    protected void onContentAvailable(Content.Producer producer)
     {
-        iterate(true, null);
+        iterate(producer);
     }
 
     protected abstract Content process(Content content);

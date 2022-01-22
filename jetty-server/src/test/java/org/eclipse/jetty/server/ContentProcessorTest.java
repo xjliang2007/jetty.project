@@ -45,13 +45,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class ContentProcessorTest
 {
-    TestProvider _provider;
+    TestProducer _provider;
     TestProcessor _processor;
 
     @BeforeEach
     public void beforeEach()
     {
-        _provider = new TestProvider();
+        _provider = new TestProducer();
         _processor = new TestProcessor(_provider);
     }
 
@@ -464,7 +464,7 @@ public class ContentProcessorTest
         assertThat(_processor.readContent(), sameInstance(Content.EOF));
     }
 
-    static class TestProvider implements Content.Provider
+    static class TestProducer implements Content.Producer
     {
         final AtomicReference<Runnable> _demand = new AtomicReference<>();
         final Deque<Content> _content = new ConcurrentLinkedDeque<>();
@@ -532,9 +532,9 @@ public class ContentProcessorTest
         Deque<String> _words = new ArrayDeque<>();
         boolean _last;
 
-        public TestProcessor(Content.Provider provider)
+        public TestProcessor(Content.Producer producer)
         {
-            super(provider);
+            super(producer);
         }
 
         @Override

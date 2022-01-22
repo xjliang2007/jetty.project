@@ -208,14 +208,15 @@ public class HttpChannel extends Attributes.Lazy
 
     public Runnable onContentAvailable()
     {
+        Consumer<Content.Producer> onContentAvailable;
         try (AutoLock ignored = _lock.lock())
         {
             if (_request == null)
                 return null;
-            Runnable onContent = _request._onContentAvailable;
-            _request._onContentAvailable = null;
-            return _serializedInvoker.offer(onContent);
+            onContentAvailable = _request._onContentAvailable;
+            _request._demanding = false;
         }
+        return _serializedInvoker.offer(() -> onContentAvailable.accept(_request));
     }
 
     public Invocable.InvocationType getOnContentAvailableInvocationType()
@@ -238,6 +239,12 @@ public class HttpChannel extends Attributes.Lazy
     {
         if (LOG.isDebugEnabled())
             LOG.debug("onError {}", this, x);
+
+        ChannelRequest request;
+        Consumer<Content.Producer> onContentAvailable;
+        Runnable invokeWriteFailure;
+        Runnable invokeOnError;
+
         try (AutoLock ignored = _lock.lock())
         {
             // If the channel doesn't have a stream, then the error is ignored
@@ -246,7 +253,7 @@ public class HttpChannel extends Attributes.Lazy
 
             // If the channel doesn't have a request, then the error must have occurred during parsing the request header
             // Make a temp request for logging and producing 400 response.
-            ChannelRequest request = _request == null ? _request = new ChannelRequest(ERROR_REQUEST) : _request;
+            request = _request == null ? _request = new ChannelRequest(ERROR_REQUEST) : _request;
 
             // Remember the error and arrange for any subsequent reads, demands or writes to fail with this error
             if (request._error == null)
@@ -258,22 +265,25 @@ public class HttpChannel extends Attributes.Lazy
             }
 
             // invoke onDataAvailable if we are currently demanding
-            Runnable invokeOnContentAvailable = request._onContentAvailable;
-            request._onContentAvailable = null;
+            onContentAvailable = request._demanding ? _request._onContentAvailable : null;
+            request._demanding = false;
 
             // if a write is in progress, break the linkage and fail the callback
             Callback onWriteComplete = request._response._onWriteComplete;
             request._response._onWriteComplete = null;
-            Runnable invokeWriteFailure = onWriteComplete == null ? null : () -> onWriteComplete.failed(x);
+            invokeWriteFailure = onWriteComplete == null ? null : () -> onWriteComplete.failed(x);
 
             // Invoke any onError listener(s);
             Consumer<Throwable> onError = request._onError;
             request._onError = null;
-            Runnable invokeOnError = onError == null ? null : () -> onError.accept(x);
+            invokeOnError = onError == null ? null : () -> onError.accept(x);
 
-            // Serialize all the error actions.
-            return _serializedInvoker.offer(invokeOnContentAvailable, invokeWriteFailure, invokeOnError, () -> request.failed(x));
         }
+
+        // Serialize all the error actions.
+        return _serializedInvoker.offer(
+            onContentAvailable == null ? null : () -> onContentAvailable.accept(_request),
+            invokeWriteFailure, invokeOnError, () -> request.failed(x));
     }
 
     public Runnable onConnectionClose(Throwable failed)
@@ -370,14 +380,15 @@ public class HttpChannel extends Attributes.Lazy
         }
     }
 
-    private class ChannelRequest implements Attributes, Request
+    private class ChannelRequest implements Attributes, Request, Content.Producer
     {
         final MetaData.Request _metaData;
         final String _id;
         final ChannelResponse _response;
         Content.Error _error;
         Consumer<Throwable> _onError;
-        Runnable _onContentAvailable;
+        Consumer<Content.Producer> _onContentAvailable;
+        boolean _demanding;
 
         private Request _wrapper = this;
 
@@ -529,6 +540,18 @@ public class HttpChannel extends Attributes.Lazy
         }
 
         @Override
+        public void content(Consumer<Content.Producer> onContentAvailable)
+        {
+            try (AutoLock ignored = _lock.lock())
+            {
+                if (_demanding)
+                    throw new IllegalStateException("demand pending");
+                _onContentAvailable = onContentAvailable;
+            }
+            onContentAvailable.accept(this);
+        }
+
+        @Override
         public Content readContent()
         {
             try (AutoLock ignored = _lock.lock())
@@ -540,22 +563,25 @@ public class HttpChannel extends Attributes.Lazy
         }
 
         @Override
-        public void demandContent(Runnable onContentAvailable)
+        public void demandContent()
         {
-            boolean error;
+            Consumer<Content.Producer> error;
             try (AutoLock ignored = _lock.lock())
             {
-                error = _error != null;
-                if (!error)
+                if (_error != null)
+                    error = _onContentAvailable;
+                else
                 {
-                    if (_onContentAvailable != null)
+                    Objects.requireNonNull(_onContentAvailable);
+                    if (_demanding)
                         throw new IllegalArgumentException("Demand pending");
-                    _onContentAvailable = onContentAvailable;
+                    error = null;
+                    _demanding = true;
                 }
             }
 
-            if (error)
-                _serializedInvoker.run(onContentAvailable);
+            if (error != null)
+                _serializedInvoker.run(() -> error.accept(this));
             else
                 getStream().demandContent();
         }

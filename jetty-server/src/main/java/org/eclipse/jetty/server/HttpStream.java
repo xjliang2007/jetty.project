@@ -20,15 +20,11 @@ import org.eclipse.jetty.http.MetaData;
 import org.eclipse.jetty.io.Connection;
 import org.eclipse.jetty.util.Callback;
 
-public interface HttpStream extends Callback
+public interface HttpStream extends Callback, Content.Producer
 {
     String getId();
 
     long getNanoTimeStamp();
-
-    Content readContent();
-
-    void demandContent(); // Calls back on Channel#onDataAvailable
 
     // TODO add MetaData.Request request.
     void send(MetaData.Response response, boolean last, Callback callback, ByteBuffer... content);

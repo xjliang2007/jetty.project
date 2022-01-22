@@ -13,11 +13,13 @@
 
 package org.eclipse.jetty.server.handler;
 
+import java.util.concurrent.atomic.AtomicBoolean;
+
 import org.eclipse.jetty.http.HttpHeader;
+import org.eclipse.jetty.server.Content;
 import org.eclipse.jetty.server.Handler;
 import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.server.Response;
-import org.eclipse.jetty.util.thread.Invocable;
 
 public class HandleOnContentHandler extends Handler.Wrapper
 {
@@ -28,14 +30,15 @@ public class HandleOnContentHandler extends Handler.Wrapper
         if (request.getContentLength() <= 0 && !request.getHeaders().contains(HttpHeader.CONTENT_TYPE))
             return super.handle(request, response);
 
-        request.demandContent(new OnContentRunner(request, response));
+        request.content(new OnContentRunner(request, response)::onContentAvailable);
         return true;
     }
 
-    private class OnContentRunner implements Runnable, Invocable
+    private class OnContentRunner
     {
         private final Request _request;
         private final Response _response;
+        private final AtomicBoolean _init = new AtomicBoolean();
 
         public OnContentRunner(Request request, Response response)
         {
@@ -43,24 +46,20 @@ public class HandleOnContentHandler extends Handler.Wrapper
             _response = response;
         }
 
-        @Override
-        public void run()
+        public void onContentAvailable(Content.Producer producer)
         {
-            try
+            if (_init.getAndSet(true))
             {
-                if (!HandleOnContentHandler.super.handle(_request, _response))
-                    _request.failed(new IllegalStateException());
+                try
+                {
+                    if (!HandleOnContentHandler.super.handle(_request, _response))
+                        _request.failed(new IllegalStateException());
+                }
+                catch (Exception e)
+                {
+                    _request.failed(e);
+                }
             }
-            catch (Exception e)
-            {
-                e.printStackTrace();
-            }
-        }
-
-        @Override
-        public InvocationType getInvocationType()
-        {
-            return InvocationType.EITHER;
         }
     }
 }

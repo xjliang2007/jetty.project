@@ -15,7 +15,8 @@ package org.eclipse.jetty.server;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.util.concurrent.ExecutionException;
+import java.util.Objects;
+import java.util.function.Consumer;
 
 import org.eclipse.jetty.http.HttpFields;
 import org.eclipse.jetty.io.ByteBufferAccumulator;
@@ -253,125 +254,117 @@ public interface Content
         }
     }
 
-    interface Provider
+    interface Producer
     {
         Content readContent();
 
-        void demandContent(Runnable onContentAvailable);
+        void demandContent();
     }
 
-    // TODO should these static methods be instance methods?   They are not very buffer efficient
-
-    static void readBytes(Provider provider, Promise<ByteBuffer> content)
+    interface Provider
     {
-        ByteBufferAccumulator out = new ByteBufferAccumulator();
-        Runnable onDataAvailable = new Runnable()
-        {
-            @Override
-            public void run()
-            {
-                while (true)
-                {
-                    Content c = provider.readContent();
-                    if (c == null)
-                    {
-                        provider.demandContent(this);
-                        return;
-                    }
-                    if (c.hasRemaining())
-                    {
-                        out.copyBuffer(c.getByteBuffer());
-                        c.release();
-                    }
-                    if (c.isLast())
-                    {
-                        if (c instanceof Content.Error)
-                            content.failed(((Content.Error)c).getCause());
-                        else
-                            content.succeeded(out.takeByteBuffer());
-                        return;
-                    }
-                }
-            }
-        };
-        onDataAvailable.run();
-    }
-
-    static ByteBuffer readBytes(Provider provider) throws InterruptedException, IOException
-    {
-        Promise.Completable<ByteBuffer> result = new Promise.Completable<>();
-        readBytes(provider, result);
-        try
-        {
-            return result.get();
-        }
-        catch (ExecutionException e)
-        {
-            throw IO.rethrow(e.getCause());
-        }
-    }
-
-    static void readUtf8String(Provider provider, Promise<String> content)
-    {
-        Utf8StringBuilder builder = new Utf8StringBuilder();
-        Runnable onDataAvailable = new Runnable()
-        {
-            @Override
-            public void run()
-            {
-                while (true)
-                {
-                    Content c = provider.readContent();
-                    if (c == null)
-                    {
-                        provider.demandContent(this);
-                        return;
-                    }
-                    if (c.hasRemaining())
-                    {
-                        builder.append(c.getByteBuffer());
-                        c.release();
-                    }
-                    if (c.isLast())
-                    {
-                        if (c instanceof Content.Error)
-                            content.failed(((Content.Error)c).getCause());
-                        else
-                            content.succeeded(builder.toString());
-                        return;
-                    }
-                }
-            }
-        };
-        onDataAvailable.run();
-    }
-
-    static String readUtf8String(Provider provider) throws InterruptedException, IOException
-    {
-        Promise.Completable<String> result = new Promise.Completable<>();
-        readUtf8String(provider, result);
-        try
-        {
-            return result.get();
-        }
-        catch (ExecutionException e)
-        {
-            throw IO.rethrow(e.getCause());
-        }
+        void content(Consumer<Producer> provider);
     }
 
     abstract class Processor implements Provider
     {
-        private final Provider _provider;
-
         protected Processor(Provider provider)
         {
-            _provider = provider;
+            provider.content(this::onContentAvailable);
         }
 
-        public Content.Provider getProvider()
+        protected abstract void onContentAvailable(Content.Producer producer);
+    }
+
+    class EmptyProvider implements Provider
+    {
+        private final Producer _producer = new Producer()
         {
-            return _provider;
+            @Override
+            public Content readContent()
+            {
+                return EOF;
+            }
+
+            @Override
+            public void demandContent()
+            {
+                _onContentAvailable.accept(this);
+            }
+        };
+
+        private volatile Consumer<Producer> _onContentAvailable;
+
+        @Override
+        public void content(Consumer<Producer> onContentAvailable)
+        {
+            Objects.requireNonNull(onContentAvailable);
+            _onContentAvailable = onContentAvailable;
+            onContentAvailable.accept(_producer);
+        }
+    }
+
+    class ByteReader extends Promise.Completable<ByteBuffer> implements Consumer<Producer>
+    {
+        ByteBufferAccumulator _out = new ByteBufferAccumulator(); // TODO from a pool?
+
+        @Override
+        public void accept(Producer provider)
+        {
+            while (true)
+            {
+                Content c = provider.readContent();
+                if (c == null)
+                {
+                    provider.demandContent();
+                    return;
+                }
+                if (c.hasRemaining())
+                {
+                    _out.copyBuffer(c.getByteBuffer());
+                    c.release();
+                }
+                if (c.isLast())
+                {
+                    if (c instanceof Error)
+                        failed(((Error)c).getCause());
+                    else
+                        succeeded(_out.takeByteBuffer());
+                    return;
+                }
+            }
+        }
+    }
+
+    class Utf8StringReader extends Promise.Completable<String> implements Consumer<Producer>
+    {
+        Utf8StringBuilder _out = new Utf8StringBuilder();
+
+        @Override
+        public void accept(Producer provider)
+        {
+            while (true)
+            {
+                Content c = provider.readContent();
+                if (c == null)
+                {
+                    provider.demandContent();
+                    return;
+                }
+                if (c.hasRemaining())
+                {
+                    _out.append(c.getByteBuffer());
+                    c.release();
+                }
+                if (c.isLast())
+                {
+                    if (c instanceof Error)
+                        failed(((Error)c).getCause());
+                    else
+                        succeeded(_out.toString());
+                    return;
+                }
+            }
         }
     }
 }

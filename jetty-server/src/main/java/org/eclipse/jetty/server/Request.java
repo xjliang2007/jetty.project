@@ -57,11 +57,7 @@ public interface Request extends Attributes, Callback, Executor, Content.Provide
 
     long getContentLength();
 
-    @Override
-    Content readContent();
-
-    @Override
-    void demandContent(Runnable onContentAvailable);
+    void content(Consumer<Content.Producer> onContentAvailable);
 
     void addErrorListener(Consumer<Throwable> onError);
 
@@ -293,15 +289,9 @@ public interface Request extends Attributes, Callback, Executor, Content.Provide
         }
 
         @Override
-        public Content readContent()
+        public void content(Consumer<Content.Producer> onContentAvailable)
         {
-            return _wrapped.readContent();
-        }
-
-        @Override
-        public void demandContent(Runnable onContentAvailable)
-        {
-            _wrapped.demandContent(onContentAvailable);
+            _wrapped.content(onContentAvailable);
         }
 
         @Override

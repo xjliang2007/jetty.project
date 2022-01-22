@@ -29,6 +29,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 import org.eclipse.jetty.http.BadMessageException;
@@ -558,15 +559,9 @@ public class ErrorHandler extends Handler.Abstract
         }
 
         @Override
-        public Content readContent()
+        public void content(Consumer<Content.Producer> onContentAvailable)
         {
-            return Content.EOF;
-        }
-
-        @Override
-        public void demandContent(Runnable onContentAvailable)
-        {
-            onContentAvailable.run();
+            new Content.EmptyProvider().content(onContentAvailable);
         }
 
         @Override

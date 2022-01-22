@@ -15,6 +15,7 @@ package org.eclipse.jetty.server.handler;
 
 import java.util.function.Consumer;
 
+import org.eclipse.jetty.server.Content;
 import org.eclipse.jetty.server.Request;
 import org.eclipse.jetty.util.Callback;
 
@@ -37,9 +38,12 @@ public class ContextRequest extends Request.Wrapper
     }
 
     @Override
-    public void demandContent(Runnable onContentAvailable)
+    public void content(Consumer<Content.Producer> onContentAvailable)
     {
-        super.demandContent(() -> _context.run(onContentAvailable));
+        super.content(p ->
+        {
+            _context.run(() -> onContentAvailable.accept(p));
+        });
     }
 
     @Override
