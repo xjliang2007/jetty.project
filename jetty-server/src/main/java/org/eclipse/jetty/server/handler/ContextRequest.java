@@ -40,10 +40,7 @@ public class ContextRequest extends Request.Wrapper
     @Override
     public void content(Consumer<Content.Producer> onContentAvailable)
     {
-        super.content(p ->
-        {
-            _context.run(() -> onContentAvailable.accept(p));
-        });
+        super.content(p -> _context.run(() -> onContentAvailable.accept(p)));
     }
 
     @Override
