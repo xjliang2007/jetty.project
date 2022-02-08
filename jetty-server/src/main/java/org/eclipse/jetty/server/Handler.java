@@ -67,6 +67,8 @@ public interface Handler extends LifeCycle, Destroyable
     @ManagedAttribute(value = "the jetty server for this handler", readonly = true)
     Server getServer();
 
+    void setServer(Server server);
+
     @ManagedOperation(value = "destroy associated resources", impact = "ACTION")
     @Override
     void destroy();
@@ -128,6 +130,7 @@ public interface Handler extends LifeCycle, Destroyable
             return _server;
         }
 
+        @Override
         public void setServer(Server server)
         {
             if (_server == server)

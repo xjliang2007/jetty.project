@@ -75,7 +75,7 @@ public class ContextHandlerTest
         _contextHandler = new ContextHandler();
         _contextHandler.setDisplayName("Test Context");
         _contextHandler.setContextPath("/ctx");
-        _contextHandler.setContextLoader(_loader);
+        _contextHandler.setClassLoader(_loader);
         _context = _contextHandler.getContext();
         _inContext = new AtomicBoolean(true);
         _server.setHandler(_contextHandler);
