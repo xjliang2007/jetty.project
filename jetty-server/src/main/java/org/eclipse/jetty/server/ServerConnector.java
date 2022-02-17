@@ -222,8 +222,9 @@ public class ServerConnector extends AbstractNetworkConnector
     @Override
     protected void doStart() throws Exception
     {
-        for (EventListener l : getBeans(SelectorManager.SelectorManagerListener.class))
+        for (EventListener l : getBeans(SelectorManager.SelectorManagerListener.class)) {
             _manager.addEventListener(l);
+        }
 
         super.doStart();
 
@@ -287,13 +288,15 @@ public class ServerConnector extends AbstractNetworkConnector
      */
     public void open(ServerSocketChannel acceptChannel) throws IOException
     {
-        if (isStarted())
+        if (isStarted()) {
             throw new IllegalStateException(getState());
+        }
         updateBean(_acceptChannel, acceptChannel);
         _acceptChannel = acceptChannel;
         _localPort = _acceptChannel.socket().getLocalPort();
-        if (_localPort <= 0)
+        if (_localPort <= 0) {
             throw new IOException("Server channel not bound");
+        }
     }
 
     @Override
@@ -304,8 +307,9 @@ public class ServerConnector extends AbstractNetworkConnector
             _acceptChannel = openAcceptChannel();
             _acceptChannel.configureBlocking(true);
             _localPort = _acceptChannel.socket().getLocalPort();
-            if (_localPort <= 0)
+            if (_localPort <= 0) {
                 throw new IOException("Server channel not bound");
+            }
             addBean(_acceptChannel);
         }
     }
@@ -322,10 +326,11 @@ public class ServerConnector extends AbstractNetworkConnector
         if (isInheritChannel())
         {
             Channel channel = System.inheritedChannel();
-            if (channel instanceof ServerSocketChannel)
+            if (channel instanceof ServerSocketChannel) {
                 serverChannel = (ServerSocketChannel)channel;
-            else
+            } else {
                 LOG.warn("Unable to use System.inheritedChannel() [{}]. Trying a new ServerSocketChannel at {}:{}", channel, getHost(), getPort());
+            }
         }
 
         if (serverChannel == null)
@@ -356,8 +361,9 @@ public class ServerConnector extends AbstractNetworkConnector
         }
         catch (Throwable x)
         {
-            if (LOG.isDebugEnabled())
+            if (LOG.isDebugEnabled()) {
                 LOG.debug("Could not configure {} to {} on {}", option, value, channel, x);
+            }
         }
     }
 
@@ -369,8 +375,9 @@ public class ServerConnector extends AbstractNetworkConnector
         }
         catch (Throwable x)
         {
-            if (LOG.isTraceEnabled())
+            if (LOG.isTraceEnabled()) {
                 LOG.trace("Could not configure {} to {} on {}", option, value, channel, x);
+            }
         }
     }
 
@@ -415,10 +422,12 @@ public class ServerConnector extends AbstractNetworkConnector
     {
         channel.configureBlocking(false);
         setSocketOption(channel, StandardSocketOptions.TCP_NODELAY, _acceptedTcpNoDelay);
-        if (_acceptedReceiveBufferSize > -1)
+        if (_acceptedReceiveBufferSize > -1) {
             setSocketOption(channel, StandardSocketOptions.SO_RCVBUF, _acceptedReceiveBufferSize);
-        if (_acceptedSendBufferSize > -1)
+        }
+        if (_acceptedSendBufferSize > -1) {
             setSocketOption(channel, StandardSocketOptions.SO_SNDBUF, _acceptedSendBufferSize);
+        }
         _manager.accept(channel);
     }
 
@@ -566,8 +575,9 @@ public class ServerConnector extends AbstractNetworkConnector
     public void setAccepting(boolean accepting)
     {
         super.setAccepting(accepting);
-        if (getAcceptors() > 0)
+        if (getAcceptors() > 0) {
             return;
+        }
 
         try
         {
@@ -576,15 +586,17 @@ public class ServerConnector extends AbstractNetworkConnector
                 if (_acceptor.get() == null)
                 {
                     Closeable acceptor = _manager.acceptor(_acceptChannel);
-                    if (!_acceptor.compareAndSet(null, acceptor))
+                    if (!_acceptor.compareAndSet(null, acceptor)) {
                         acceptor.close();
+                    }
                 }
             }
             else
             {
                 Closeable acceptor = _acceptor.get();
-                if (acceptor != null && _acceptor.compareAndSet(acceptor, null))
+                if (acceptor != null && _acceptor.compareAndSet(acceptor, null)) {
                     acceptor.close();
+                }
             }
         }
         catch (IOException e)

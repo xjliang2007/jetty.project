@@ -64,14 +64,17 @@ public abstract class FillInterest
      */
     public boolean tryRegister(Callback callback)
     {
-        if (callback == null)
+        if (callback == null) {
             throw new IllegalArgumentException();
+        }
 
-        if (!_interested.compareAndSet(null, callback))
+        if (!_interested.compareAndSet(null, callback)) {
             return false;
+        }
 
-        if (LOG.isDebugEnabled())
+        if (LOG.isDebugEnabled()) {
             LOG.debug("interested {}", this);
+        }
 
         try
         {
@@ -92,16 +95,18 @@ public abstract class FillInterest
      */
     public boolean fillable()
     {
-        if (LOG.isDebugEnabled())
+        if (LOG.isDebugEnabled()) {
             LOG.debug("fillable {}", this);
+        }
         Callback callback = _interested.get();
         if (callback != null && _interested.compareAndSet(callback, null))
         {
             callback.succeeded();
             return true;
         }
-        if (LOG.isDebugEnabled())
+        if (LOG.isDebugEnabled()) {
             LOG.debug("{} lost race {}", this, callback);
+        }
         return false;
     }
 
@@ -127,8 +132,9 @@ public abstract class FillInterest
      */
     public boolean onFail(Throwable cause)
     {
-        if (LOG.isDebugEnabled())
+        if (LOG.isDebugEnabled()) {
             LOG.debug("onFail {}", this, cause);
+        }
         Callback callback = _interested.get();
         if (callback != null && _interested.compareAndSet(callback, null))
         {
@@ -140,11 +146,13 @@ public abstract class FillInterest
 
     public void onClose()
     {
-        if (LOG.isDebugEnabled())
+        if (LOG.isDebugEnabled()) {
             LOG.debug("onClose {}", this);
+        }
         Callback callback = _interested.get();
-        if (callback != null && _interested.compareAndSet(callback, null))
+        if (callback != null && _interested.compareAndSet(callback, null)) {
             callback.failed(new ClosedChannelException());
+        }
     }
 
     @Override

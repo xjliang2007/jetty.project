@@ -45,6 +45,7 @@ public abstract class SelectableChannelEndPoint extends AbstractEndPoint impleme
     // The desired value for interestOps.
     private int _desiredInterestOps;
     private final ManagedSelector.SelectorUpdate _updateKeyAction = this::updateKeyAction;
+
     private final Runnable _runFillable = new RunnableCloseable("runFillable")
     {
         @Override
@@ -59,6 +60,7 @@ public abstract class SelectableChannelEndPoint extends AbstractEndPoint impleme
             return getFillInterest().getCallbackInvocationType();
         }
     };
+
     private final Runnable _runCompleteWrite = new RunnableCloseable("runCompleteWrite")
     {
         @Override
@@ -79,6 +81,7 @@ public abstract class SelectableChannelEndPoint extends AbstractEndPoint impleme
             return String.format("%s:%s:%s->%s", SelectableChannelEndPoint.this, _operation, getInvocationType(), getWriteFlusher());
         }
     };
+
     private final Runnable _runCompleteWriteFillable = new RunnableCloseable("runCompleteWriteFillable")
     {
         @Override
@@ -93,14 +96,17 @@ public abstract class SelectableChannelEndPoint extends AbstractEndPoint impleme
         {
             InvocationType fillT = getFillInterest().getCallbackInvocationType();
             InvocationType flushT = getWriteFlusher().getCallbackInvocationType();
-            if (fillT == flushT)
+            if (fillT == flushT) {
                 return fillT;
+            }
 
-            if (fillT == InvocationType.EITHER && flushT == InvocationType.NON_BLOCKING)
+            if (fillT == InvocationType.EITHER && flushT == InvocationType.NON_BLOCKING) {
                 return InvocationType.EITHER;
+            }
 
-            if (fillT == InvocationType.NON_BLOCKING && flushT == InvocationType.EITHER)
+            if (fillT == InvocationType.NON_BLOCKING && flushT == InvocationType.EITHER) {
                 return InvocationType.EITHER;
+            }
 
             return InvocationType.BLOCKING;
         }
@@ -131,8 +137,9 @@ public abstract class SelectableChannelEndPoint extends AbstractEndPoint impleme
         try
         {
             SelectableChannel channel = getChannel();
-            if (channel instanceof NetworkChannel)
+            if (channel instanceof NetworkChannel) {
                 return ((NetworkChannel)channel).getLocalAddress();
+            }
             return super.getLocalSocketAddress();
         }
         catch (Throwable x)
@@ -151,8 +158,9 @@ public abstract class SelectableChannelEndPoint extends AbstractEndPoint impleme
     @Override
     public void doClose()
     {
-        if (LOG.isDebugEnabled())
+        if (LOG.isDebugEnabled()) {
             LOG.debug("doClose {}", this);
+        }
         IO.close(_channel);
         super.doClose();
     }
@@ -166,8 +174,9 @@ public abstract class SelectableChannelEndPoint extends AbstractEndPoint impleme
         }
         finally
         {
-            if (_selector != null)
+            if (_selector != null) {
                 _selector.destroyEndPoint(this, cause);
+            }
         }
     }
 
@@ -196,15 +205,18 @@ public abstract class SelectableChannelEndPoint extends AbstractEndPoint impleme
             pending = _updatePending;
             oldInterestOps = _desiredInterestOps;
             newInterestOps = oldInterestOps | operation;
-            if (newInterestOps != oldInterestOps)
+            if (newInterestOps != oldInterestOps) {
                 _desiredInterestOps = newInterestOps;
+            }
         }
 
-        if (LOG.isDebugEnabled())
+        if (LOG.isDebugEnabled()) {
             LOG.debug("changeInterests p={} {}->{} for {}", pending, oldInterestOps, newInterestOps, this);
+        }
 
-        if (!pending && _selector != null)
+        if (!pending && _selector != null) {
             _selector.submit(_updateKeyAction);
+        }
     }
 
     @Override
@@ -228,8 +240,9 @@ public abstract class SelectableChannelEndPoint extends AbstractEndPoint impleme
         boolean fillable = (readyOps & SelectionKey.OP_READ) != 0;
         boolean flushable = (readyOps & SelectionKey.OP_WRITE) != 0;
 
-        if (LOG.isDebugEnabled())
+        if (LOG.isDebugEnabled()) {
             LOG.debug("onSelected {}->{} r={} w={} for {}", oldInterestOps, newInterestOps, fillable, flushable, this);
+        }
 
         // return task to complete the job
         Runnable task = fillable
@@ -240,8 +253,9 @@ public abstract class SelectableChannelEndPoint extends AbstractEndPoint impleme
             ? _runCompleteWrite
             : null);
 
-        if (LOG.isDebugEnabled())
+        if (LOG.isDebugEnabled()) {
             LOG.debug("task {}", task);
+        }
         return task;
     }
 
@@ -272,13 +286,15 @@ public abstract class SelectableChannelEndPoint extends AbstractEndPoint impleme
                 }
             }
 
-            if (LOG.isDebugEnabled())
+            if (LOG.isDebugEnabled()) {
                 LOG.debug("Key interests updated {} -> {} on {}", oldInterestOps, newInterestOps, this);
+            }
         }
         catch (CancelledKeyException x)
         {
-            if (LOG.isDebugEnabled())
+            if (LOG.isDebugEnabled()) {
                 LOG.debug("Ignoring key update for cancelled key {}", this, x);
+            }
             close();
         }
         catch (Throwable x)

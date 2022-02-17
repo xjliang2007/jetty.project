@@ -88,8 +88,9 @@ public abstract class SelectorManager extends ContainerLifeCycle implements Dump
      */
     protected SelectorManager(Executor executor, Scheduler scheduler, int selectors)
     {
-        if (selectors <= 0)
+        if (selectors <= 0) {
             selectors = defaultSelectors(executor);
+        }
         this.executor = executor;
         this.scheduler = scheduler;
         _selectors = new ManagedSelector[selectors];
@@ -266,12 +267,14 @@ public abstract class SelectorManager extends ContainerLifeCycle implements Dump
             // Cleanup
             for (ManagedSelector selector : _selectors)
             {
-                if (selector != null)
+                if (selector != null) {
                     removeBean(selector);
+                }
             }
             Arrays.fill(_selectors, null);
-            if (_lease != null)
+            if (_lease != null) {
                 _lease.close();
+            }
         }
     }
 
@@ -308,10 +311,11 @@ public abstract class SelectorManager extends ContainerLifeCycle implements Dump
         }
         catch (Throwable x)
         {
-            if (isRunning())
+            if (isRunning()) {
                 LOG.warn("Exception while notifying connection {}", connection, x);
-            else
+            } else {
                 LOG.debug("Exception while notifying connection {}", connection, x);
+            }
             throw x;
         }
     }
@@ -330,8 +334,9 @@ public abstract class SelectorManager extends ContainerLifeCycle implements Dump
         }
         catch (Throwable x)
         {
-            if (LOG.isDebugEnabled())
+            if (LOG.isDebugEnabled()) {
                 LOG.debug("Exception while notifying connection {}", connection, x);
+            }
         }
     }
 
@@ -398,8 +403,9 @@ public abstract class SelectorManager extends ContainerLifeCycle implements Dump
     {
         if (super.addEventListener(listener))
         {
-            if (listener instanceof AcceptListener)
+            if (listener instanceof AcceptListener) {
                 _acceptListeners.add((AcceptListener)listener);
+            }
             return true;
         }
         return false;
@@ -410,8 +416,9 @@ public abstract class SelectorManager extends ContainerLifeCycle implements Dump
     {
         if (super.removeEventListener(listener))
         {
-            if (listener instanceof AcceptListener)
+            if (listener instanceof AcceptListener) {
                 _acceptListeners.remove(listener);
+            }
             return true;
         }
         return false;

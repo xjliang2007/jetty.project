@@ -780,14 +780,15 @@ public class ProxyConnectionFactory extends DetectorConnectionFactory
             _remote = remote;
         }
 
+        @Override
         public EndPoint unwrap()
         {
             return _endPoint;
         }
-        
+
         /**
          * <p>Sets a TLV vector, see section 2.2.7 of the PROXY protocol specification.</p>
-         * 
+         *
          * @param type the TLV type
          * @param value the TLV value
          */
@@ -797,7 +798,7 @@ public class ProxyConnectionFactory extends DetectorConnectionFactory
                 _tlvs = new HashMap<>();
             _tlvs.put(type, value);
         }
-        
+
         /**
          * <p>Gets a TLV vector, see section 2.2.7 of the PROXY protocol specification.</p>
          *

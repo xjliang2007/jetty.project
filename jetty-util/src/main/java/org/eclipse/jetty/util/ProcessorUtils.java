@@ -54,8 +54,9 @@ public class ProcessorUtils
 
     public static void setAvailableProcessors(int processors)
     {
-        if (processors < 1)
+        if (processors < 1) {
             throw new IllegalArgumentException("Invalid number of processors: " + processors);
+        }
         __availableProcessors = processors;
     }
 }

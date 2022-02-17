@@ -89,10 +89,10 @@ import org.eclipse.jetty.util.thread.Invocable;
  */
 public interface EndPoint extends Closeable
 {
-    /** 
+    /**
      * Marks an {@code EndPoint} that wraps another {@code EndPoint}.
      */
-    public interface Wrapper 
+    interface Wrapper
     {
         /**
          * @return The wrapped {@code EndPoint}
@@ -324,5 +324,5 @@ public interface EndPoint extends Closeable
      *
      * @param newConnection the connection to upgrade to
      */
-    public void upgrade(Connection newConnection);
+    void upgrade(Connection newConnection);
 }
